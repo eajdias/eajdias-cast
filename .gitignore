@@ -1,0 +1,11 @@
+.env
+data/cache/*
+!data/cache/.gitkeep
+data/cinema/*
+!data/cinema/.gitkeep
+data/manga/*
+!data/manga/.gitkeep
+data/music/*
+!data/music/.gitkeep
+cast
+*.tmp
