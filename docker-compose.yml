@@ -8,13 +8,9 @@ services:
       - "${PORT:-8095}:8080"
     environment:
       PASSWORD: ${PASSWORD:-cast123}
-      CINEMA_DIR: /data/cinema
-      MANGA_DIR: /data/manga
-      MUSIC_DIR: /data/music
+      MEDIA_DIR: /data/media
       CACHE_DIR: /data/cache
     volumes:
-      - ${CINEMA_BIND:-./data/cinema}:/data/cinema:ro
-      - ${MANGA_BIND:-./data/manga}:/data/manga:ro
-      - ${MUSIC_BIND:-./data/music}:/data/music:ro
+      - ${MEDIA_BIND:-/mnt/homelab/media}:/data/media:ro
       - ${CACHE_BIND:-./data/cache}:/data/cache
     restart: unless-stopped

@@ -83,8 +83,15 @@
   <!-- Aba 2: Cinema & Séries -->
   <section id="tab-cinema" class="view-tab">
     <div class="view-header">
-      <h2>Cinema & Séries</h2>
+      <h2>Cinema, Séries & Animes</h2>
       <input type="search" id="search-cinema" placeholder="Pesquisar títulos..." class="search-input">
+    </div>
+    <div class="category-filters" id="cinema-filters">
+      <button type="button" class="cat-chip active" data-cat="all">Todos</button>
+      <button type="button" class="cat-chip" data-cat="filme">Filmes</button>
+      <button type="button" class="cat-chip" data-cat="serie">Séries</button>
+      <button type="button" class="cat-chip" data-cat="anime">Animes</button>
+      <button type="button" class="cat-chip" data-cat="video">Vídeos</button>
     </div>
     <div id="cinema-grid" class="cards-grid"></div>
   </section>

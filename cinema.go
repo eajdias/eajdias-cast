@@ -23,7 +23,8 @@ type SubtitleTrack struct {
 type VideoMedia struct {
 	ID        string          `json:"id"`
 	Title     string          `json:"title"`
-	Parent    string          `json:"parent,omitempty"` // Série
+	Parent    string          `json:"parent,omitempty"` // Série / Anime
+	Category  string          `json:"category"`         // "filme" | "serie" | "anime" | "video"
 	Season    int             `json:"season,omitempty"`
 	Episode   int             `json:"episode,omitempty"`
 	Type      string          `json:"type"`             // "movie" | "episode"
@@ -36,7 +37,8 @@ type VideoMedia struct {
 type VideoGroup struct {
 	ID       string       `json:"id"`
 	Title    string       `json:"title"`
-	Type     string       `json:"type"` // "movie" | "show"
+	Type     string       `json:"type"`     // "movie" | "show"
+	Category string       `json:"category"` // "filme" | "serie" | "anime" | "video"
 	Episodes []VideoMedia `json:"episodes,omitempty"`
 	Movie    *VideoMedia  `json:"movie,omitempty"`
 }
@@ -73,110 +75,149 @@ func parseEpisodeInfo(name string, dirName string) (int, int) {
 	return s, e
 }
 
-func scanCinema(dir string) ([]VideoGroup, map[string]VideoMedia) {
+func detectCategory(relPath string) string {
+	low := strings.ToLower(relPath)
+	switch {
+	case strings.Contains(low, "anime"):
+		return "anime"
+	case strings.Contains(low, "series") || strings.Contains(low, "serie"):
+		return "serie"
+	case strings.Contains(low, "filmes") || strings.Contains(low, "movie"):
+		return "filme"
+	case strings.Contains(low, "video"):
+		return "video"
+	default:
+		return "filme"
+	}
+}
+
+func scanCinema(dirs ...string) ([]VideoGroup, map[string]VideoMedia) {
 	mediaMap := make(map[string]VideoMedia)
 	showsMap := make(map[string]*VideoGroup)
 	var movies []VideoGroup
 
-	// Primeiro, coletar todas as legendas disponíveis indexadas pelo nome base
 	subMap := make(map[string][]SubtitleTrack)
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+
+	for _, dir := range dirs {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			continue
 		}
-		if isSubtitleFile(d.Name()) {
-			base := strings.TrimSuffix(path, filepath.Ext(path))
-			subID := hashString(path)
-			label := "Legenda"
-			lang := "pt"
-			if strings.Contains(strings.ToLower(d.Name()), "en") {
-				label = "Inglês"
-				lang = "en"
-			} else if strings.Contains(strings.ToLower(d.Name()), "pt") {
-				label = "Português"
-				lang = "pt"
+
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
 			}
-			subMap[base] = append(subMap[base], SubtitleTrack{
-				ID:    subID,
-				Label: label,
-				Lang:  lang,
-				Path:  path,
-			})
-		}
-		return nil
-	})
-
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if !isVideoFile(d.Name()) {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		rel, _ := filepath.Rel(dir, path)
-		parts := strings.Split(rel, string(filepath.Separator))
-		baseNoExt := strings.TrimSuffix(path, filepath.Ext(path))
-		subs := subMap[baseNoExt]
-
-		id := hashString(path)
-		filename := d.Name()
-		cleanName := strings.TrimSuffix(filename, filepath.Ext(filename))
-
-		if len(parts) > 1 && (epRegex1.MatchString(filename) || strings.Contains(strings.ToLower(rel), "season") || strings.Contains(strings.ToLower(rel), "temporada") || strings.Contains(strings.ToLower(rel), "series")) {
-			// Provavelmente é uma Série
-			showTitle := parts[0]
-			season, episode := parseEpisodeInfo(filename, parts[len(parts)-2])
-
-			v := VideoMedia{
-				ID:        id,
-				Title:     cleanName,
-				Parent:    showTitle,
-				Season:    season,
-				Episode:   episode,
-				Type:      "episode",
-				Path:      path,
-				Size:      info.Size(),
-				Subtitles: subs,
-			}
-			mediaMap[id] = v
-
-			grp, exists := showsMap[showTitle]
-			if !exists {
-				grp = &VideoGroup{
-					ID:       hashString(showTitle),
-					Title:    showTitle,
-					Type:     "show",
-					Episodes: []VideoMedia{},
+			if isSubtitleFile(d.Name()) {
+				base := strings.TrimSuffix(path, filepath.Ext(path))
+				subID := hashString(path)
+				label := "Legenda"
+				lang := "pt"
+				if strings.Contains(strings.ToLower(d.Name()), "en") {
+					label = "Inglês"
+					lang = "en"
+				} else if strings.Contains(strings.ToLower(d.Name()), "pt") {
+					label = "Português"
+					lang = "pt"
 				}
-				showsMap[showTitle] = grp
+				subMap[base] = append(subMap[base], SubtitleTrack{
+					ID:    subID,
+					Label: label,
+					Lang:  lang,
+					Path:  path,
+				})
 			}
-			grp.Episodes = append(grp.Episodes, v)
-		} else {
-			// É um Filme avulso
-			v := VideoMedia{
-				ID:        id,
-				Title:     cleanName,
-				Type:      "movie",
-				Path:      path,
-				Size:      info.Size(),
-				Subtitles: subs,
+			return nil
+		})
+
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
 			}
-			mediaMap[id] = v
-			movies = append(movies, VideoGroup{
-				ID:    id,
-				Title: cleanName,
-				Type:  "movie",
-				Movie: &v,
-			})
-		}
-		return nil
-	})
+			if !isVideoFile(d.Name()) {
+				return nil
+			}
+
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+
+			rel, _ := filepath.Rel(dir, path)
+			parts := strings.Split(rel, string(filepath.Separator))
+			baseNoExt := strings.TrimSuffix(path, filepath.Ext(path))
+			subs := subMap[baseNoExt]
+
+			id := hashString(path)
+			filename := d.Name()
+			cleanName := strings.TrimSuffix(filename, filepath.Ext(filename))
+			cat := detectCategory(rel)
+
+			isSeriesLike := epRegex1.MatchString(filename) ||
+				epRegex2.MatchString(filename) ||
+				cat == "serie" || cat == "anime" ||
+				strings.Contains(strings.ToLower(rel), "season") ||
+				strings.Contains(strings.ToLower(rel), "temporada")
+
+			if len(parts) > 1 && isSeriesLike {
+				// Detectar nome da série / anime com precisão
+				showTitle := parts[0]
+				topFolder := strings.ToLower(parts[0])
+				if (topFolder == "anime" || topFolder == "animes" || topFolder == "series" || topFolder == "serie") && len(parts) > 2 {
+					showTitle = parts[1]
+				}
+
+				season, episode := parseEpisodeInfo(filename, parts[len(parts)-2])
+
+				v := VideoMedia{
+					ID:        id,
+					Title:     cleanName,
+					Parent:    showTitle,
+					Category:  cat,
+					Season:    season,
+					Episode:   episode,
+					Type:      "episode",
+					Path:      path,
+					Size:      info.Size(),
+					Subtitles: subs,
+				}
+				mediaMap[id] = v
+
+				grpKey := cat + ":" + showTitle
+				grp, exists := showsMap[grpKey]
+				if !exists {
+					grp = &VideoGroup{
+						ID:       hashString(grpKey),
+						Title:    showTitle,
+						Type:     "show",
+						Category: cat,
+						Episodes: []VideoMedia{},
+					}
+					showsMap[grpKey] = grp
+				}
+				grp.Episodes = append(grp.Episodes, v)
+			} else {
+				// Filme ou vídeo avulso
+				v := VideoMedia{
+					ID:        id,
+					Title:     cleanName,
+					Category:  cat,
+					Type:      "movie",
+					Path:      path,
+					Size:      info.Size(),
+					Subtitles: subs,
+				}
+				mediaMap[id] = v
+				movies = append(movies, VideoGroup{
+					ID:       id,
+					Title:    cleanName,
+					Type:     "movie",
+					Category: cat,
+					Movie:    &v,
+				})
+			}
+			return nil
+		})
+	}
 
 	var result []VideoGroup
 	// Ordenar episódios das séries

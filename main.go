@@ -18,13 +18,14 @@ import (
 var staticFS embed.FS
 
 type server struct {
-	cinemaDir string
-	mangaDir  string
-	musicDir  string
-	cacheDir  string
-	password  string
-	secret    []byte
-	db        *dbStore
+	mediaDir    string
+	cinemaDirs  []string
+	mangaDir    string
+	musicDir    string
+	cacheDir    string
+	password    string
+	secret      []byte
+	db          *dbStore
 
 	mu          sync.RWMutex
 	lastScan    time.Time
@@ -32,6 +33,7 @@ type server struct {
 	cinemaMap   map[string]VideoMedia
 	mangaItems  []MangaSeries
 	mangaChMap  map[string]MangaChapter
+	mangaCoverMap map[string]string
 	musicAlbums []AlbumGroup
 	musicMap    map[string]Track
 
@@ -73,8 +75,8 @@ func (s *server) rescanIfNeeded() {
 		return
 	}
 
-	cinemaGroups, cinemaMedia := scanCinema(s.cinemaDir)
-	mangaList := scanManga(s.mangaDir)
+	cinemaGroups, cinemaMedia := scanCinema(s.cinemaDirs...)
+	mangaList, mangaCovers := scanManga(s.mangaDir)
 	musicList, trackMap := scanMusic(s.musicDir)
 
 	mangaCh := make(map[string]MangaChapter)
@@ -88,6 +90,7 @@ func (s *server) rescanIfNeeded() {
 	s.cinemaMap = cinemaMedia
 	s.mangaItems = mangaList
 	s.mangaChMap = mangaCh
+	s.mangaCoverMap = mangaCovers
 	s.musicAlbums = musicList
 	s.musicMap = trackMap
 	s.lastScan = time.Now()
@@ -107,32 +110,79 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 func main() {
-	cinemaDir := env("CINEMA_DIR", "/data/cinema")
-	mangaDir := env("MANGA_DIR", "/data/manga")
-	musicDir := env("MUSIC_DIR", "/data/music")
+	mediaDir := env("MEDIA_DIR", "/data/media")
 	cacheDir := env("CACHE_DIR", "/data/cache")
 	password := env("PASSWORD", "cast123")
 	port := env("PORT", "8080")
 
-	_ = os.MkdirAll(cinemaDir, 0755)
-	_ = os.MkdirAll(mangaDir, 0755)
-	_ = os.MkdirAll(musicDir, 0755)
+	// Autodetectar estrutura dentro de MEDIA_DIR se fornecido
+	cinemaDirEnv := env("CINEMA_DIR", "")
+	mangaDirEnv := env("MANGA_DIR", "")
+	musicDirEnv := env("MUSIC_DIR", "")
+
+	var cinemaDirs []string
+	var mangaDir string
+	var musicDir string
+
+	if mangaDirEnv != "" {
+		mangaDir = mangaDirEnv
+	} else if dirExists(filepath.Join(mediaDir, "manga")) {
+		mangaDir = filepath.Join(mediaDir, "manga")
+	} else if dirExists(filepath.Join(mediaDir, "mangas")) {
+		mangaDir = filepath.Join(mediaDir, "mangas")
+	} else {
+		mangaDir = "/data/manga"
+	}
+
+	if musicDirEnv != "" {
+		musicDir = musicDirEnv
+	} else if dirExists(filepath.Join(mediaDir, "musica")) {
+		musicDir = filepath.Join(mediaDir, "musica")
+	} else if dirExists(filepath.Join(mediaDir, "music")) {
+		musicDir = filepath.Join(mediaDir, "music")
+	} else {
+		musicDir = "/data/music"
+	}
+
+	if cinemaDirEnv != "" {
+		cinemaDirs = []string{cinemaDirEnv}
+	} else {
+		// Checar se há subpastas de vídeo na raiz
+		for _, cand := range []string{"filmes", "series", "anime", "videos", "cinema", "movies", "tv"} {
+			p := filepath.Join(mediaDir, cand)
+			if dirExists(p) {
+				cinemaDirs = append(cinemaDirs, p)
+			}
+		}
+		if len(cinemaDirs) == 0 {
+			cinemaDirs = []string{filepath.Join(mediaDir, "cinema")}
+		}
+	}
+
+	_ = os.MkdirAll(cacheDir, 0755)
 	_ = os.MkdirAll(filepath.Join(cacheDir, "thumbs"), 0755)
 
 	db := initDB(cacheDir)
 	secret := getOrInitSecret(filepath.Join(cacheDir, ".secret"))
 
 	srv := &server{
-		cinemaDir: cinemaDir,
-		mangaDir:  mangaDir,
-		musicDir:  musicDir,
-		cacheDir:  cacheDir,
-		password:  password,
-		secret:    secret,
-		db:        db,
-		sem:       make(chan struct{}, 2),
-		inflight:  make(map[string]*thumbCall),
+		mediaDir:      mediaDir,
+		cinemaDirs:    cinemaDirs,
+		mangaDir:      mangaDir,
+		musicDir:      musicDir,
+		cacheDir:      cacheDir,
+		password:      password,
+		secret:        secret,
+		db:            db,
+		mangaCoverMap: make(map[string]string),
+		sem:           make(chan struct{}, 2),
+		inflight:      make(map[string]*thumbCall),
 	}
 
 	// Pré-indexar mídias no startup em background
@@ -162,6 +212,7 @@ func main() {
 
 	// API Manga
 	mux.HandleFunc("GET /api/manga", srv.requireAuth(srv.handleMangaList))
+	mux.HandleFunc("GET /api/manga/cover", srv.requireAuth(srv.handleMangaCover))
 	mux.HandleFunc("GET /api/manga/page", srv.requireAuth(srv.handleMangaPage))
 
 	// API Música
@@ -171,7 +222,7 @@ func main() {
 
 	addr := ":" + port
 	log.Printf("[eajdias-cast] Servidor iniciado na porta %s", port)
-	log.Printf("[eajdias-cast] Cinema: %s | Manga: %s | Musica: %s", cinemaDir, mangaDir, musicDir)
+	log.Printf("[eajdias-cast] Cinema Pastas: %v | Manga: %s | Musica: %s", cinemaDirs, mangaDir, musicDir)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
@@ -400,3 +451,17 @@ func (s *server) handleFavorite(w http.ResponseWriter, r *http.Request) {
 	fav := s.db.ToggleFavorite(body.MediaID)
 	writeJSON(w, http.StatusOK, map[string]bool{"fav": fav})
 }
+
+func (s *server) handleMangaCover(w http.ResponseWriter, r *http.Request) {
+	s.rescanIfNeeded()
+	id := r.URL.Query().Get("id")
+	s.mu.RLock()
+	coverPath, ok := s.mangaCoverMap[id]
+	s.mu.RUnlock()
+	if !ok || coverPath == "" {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveMangaCover(w, r, coverPath)
+}
+

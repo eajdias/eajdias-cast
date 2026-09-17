@@ -65,29 +65,52 @@ func isImageFile(name string) bool {
 	return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp" || ext == ".gif" || ext == ".avif"
 }
 
-func scanManga(dir string) []MangaSeries {
+func findMangaCover(baseDir, title string) string {
+	candidates := []string{
+		filepath.Join(baseDir, "thumbnails", title+".jpg"),
+		filepath.Join(baseDir, "thumbnails", title+".png"),
+		filepath.Join(baseDir, "thumbnails", title+".webp"),
+		filepath.Join(baseDir, title, "cover.jpg"),
+		filepath.Join(baseDir, title, "cover.png"),
+		filepath.Join(baseDir, title, "folder.jpg"),
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
+func scanManga(dir string) ([]MangaSeries, map[string]string) {
 	var series []MangaSeries
+	covers := make(map[string]string)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return series
+		return series, covers
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() && !strings.HasSuffix(strings.ToLower(entry.Name()), ".cbz") && !strings.HasSuffix(strings.ToLower(entry.Name()), ".zip") {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || strings.EqualFold(name, "thumbnails") || strings.EqualFold(name, "covers") {
+			continue
+		}
+		if !entry.IsDir() && !strings.HasSuffix(strings.ToLower(name), ".cbz") && !strings.HasSuffix(strings.ToLower(name), ".zip") {
 			continue
 		}
 
 		// Se for um diretório de mangá (ex: /data/manga/One Piece)
 		if entry.IsDir() {
-			mangaDir := filepath.Join(dir, entry.Name())
+			mangaDir := filepath.Join(dir, name)
 			chEntries, err := os.ReadDir(mangaDir)
 			if err != nil {
 				continue
 			}
 
+			mangaID := hashString(name)
 			manga := MangaSeries{
-				ID:    hashString(entry.Name()),
-				Title: entry.Name(),
+				ID:    mangaID,
+				Title: name,
 			}
 
 			var chapters []MangaChapter
@@ -135,14 +158,23 @@ func scanManga(dir string) []MangaSeries {
 					return naturalLess(chapters[i].Title, chapters[j].Title)
 				})
 				manga.Chapters = chapters
-				manga.CoverURL = fmt.Sprintf("/api/manga/page?ch=%s&p=0", chapters[0].ID)
+
+				// Verificar se tem capa própria (ex: manga/thumbnails/{Nome}.jpg)
+				if cov := findMangaCover(dir, name); cov != "" {
+					covers[mangaID] = cov
+					manga.CoverURL = fmt.Sprintf("/api/manga/cover?id=%s", mangaID)
+				} else {
+					manga.CoverURL = fmt.Sprintf("/api/manga/page?ch=%s&p=0", chapters[0].ID)
+				}
+
 				series = append(series, manga)
 			}
 		} else {
 			// Arquivo CBZ solto na raiz do manga dir (ex: /data/manga/Berserk_Vol_01.cbz)
-			filePath := filepath.Join(dir, entry.Name())
+			filePath := filepath.Join(dir, name)
 			if count, err := countZipImages(filePath); err == nil && count > 0 {
-				cleanTitle := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+				cleanTitle := strings.TrimSuffix(name, filepath.Ext(name))
+				mangaID := hashString(name)
 				ch := MangaChapter{
 					ID:        hashString(filePath),
 					Title:     cleanTitle,
@@ -151,11 +183,18 @@ func scanManga(dir string) []MangaSeries {
 					PageCount: count,
 				}
 				manga := MangaSeries{
-					ID:       hashString(entry.Name()),
+					ID:       mangaID,
 					Title:    cleanTitle,
-					CoverURL: fmt.Sprintf("/api/manga/page?ch=%s&p=0", ch.ID),
 					Chapters: []MangaChapter{ch},
 				}
+
+				if cov := findMangaCover(dir, cleanTitle); cov != "" {
+					covers[mangaID] = cov
+					manga.CoverURL = fmt.Sprintf("/api/manga/cover?id=%s", mangaID)
+				} else {
+					manga.CoverURL = fmt.Sprintf("/api/manga/page?ch=%s&p=0", ch.ID)
+				}
+
 				series = append(series, manga)
 			}
 		}
@@ -164,7 +203,7 @@ func scanManga(dir string) []MangaSeries {
 	sort.Slice(series, func(i, j int) bool {
 		return strings.ToLower(series[i].Title) < strings.ToLower(series[j].Title)
 	})
-	return series
+	return series, covers
 }
 
 func countZipImages(path string) (int, error) {
@@ -262,3 +301,9 @@ func (s *server) serveMangaPage(w http.ResponseWriter, r *http.Request, ch Manga
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeFile(w, r, pagePath)
 }
+
+func (s *server) serveMangaCover(w http.ResponseWriter, r *http.Request, coverPath string) {
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, coverPath)
+}
+

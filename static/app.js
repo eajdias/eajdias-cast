@@ -1,6 +1,7 @@
 // Estado Global da Aplicação
 const state = {
   activeTab: 'home',
+  selectedCinemaCat: 'all',
   overview: null,
   cinema: [],
   manga: [],
@@ -38,6 +39,17 @@ function setupNavigation() {
     btn.addEventListener('click', () => {
       const tab = btn.getAttribute('data-tab');
       switchTab(tab);
+    });
+  });
+
+  // Filtros de Categoria do Cinema
+  document.querySelectorAll('#cinema-filters .cat-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#cinema-filters .cat-chip').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.selectedCinemaCat = btn.getAttribute('data-cat');
+      const searchVal = document.getElementById('search-cinema')?.value || '';
+      renderCinema(searchVal);
     });
   });
 
@@ -143,10 +155,14 @@ async function loadCinema() {
 function renderCinema(filter = '') {
   const grid = document.getElementById('cinema-grid');
   const term = filter.toLowerCase();
-  const items = state.cinema.filter(it => it.title.toLowerCase().includes(term));
+  let items = state.cinema.filter(it => it.title.toLowerCase().includes(term));
+
+  if (state.selectedCinemaCat && state.selectedCinemaCat !== 'all') {
+    items = items.filter(it => it.category === state.selectedCinemaCat);
+  }
 
   if (items.length === 0) {
-    grid.innerHTML = '<div class="empty-state">Nenhum vídeo encontrado.</div>';
+    grid.innerHTML = '<div class="empty-state">Nenhum vídeo encontrado nesta categoria.</div>';
     return;
   }
 
@@ -155,11 +171,16 @@ function renderCinema(filter = '') {
     const thumbPath = isShow ? it.episodes[0]?.path : it.movie?.path;
     const epCount = isShow ? `${it.episodes.length} episódios` : 'Filme';
 
+    let badge = 'Vídeo';
+    if (it.category === 'anime') badge = 'Anime';
+    else if (it.category === 'serie' || isShow) badge = 'Série';
+    else if (it.category === 'filme') badge = 'Filme';
+
     return `
       <div class="media-card" onclick="handleCinemaClick('${it.id}')">
         <div class="card-cover">
           <img src="/api/thumb?path=${encodeURIComponent(thumbPath)}&w=360" loading="lazy">
-          <span class="card-badge">${isShow ? 'Série' : 'Filme'}</span>
+          <span class="card-badge">${badge}</span>
         </div>
         <div class="card-details">
           <div class="card-title">${escapeHTML(it.title)}</div>
