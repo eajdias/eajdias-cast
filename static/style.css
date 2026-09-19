@@ -291,6 +291,27 @@ body {
   border-radius: 4px;
   backdrop-filter: blur(4px);
 }
+.card-dismiss {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.7rem;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.55;
+  backdrop-filter: blur(4px);
+}
+.media-card:hover .card-dismiss {
+  opacity: 1;
+}
 
 .card-details {
   padding: 0.85rem;

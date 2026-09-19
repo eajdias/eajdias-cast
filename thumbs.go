@@ -39,6 +39,31 @@ func thumbFingerprint(path string) string {
 	return "|" + strconv.FormatInt(fi.ModTime().Unix(), 10) + "|" + strconv.FormatInt(fi.Size(), 10)
 }
 
+func frameBrightness(path string) (float64, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return 0, false
+	}
+	b := img.Bounds()
+	var sum, n uint64
+	for y := b.Min.Y; y < b.Max.Y; y += 4 {
+		for x := b.Min.X; x < b.Max.X; x += 4 {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			sum += uint64(r>>8) + uint64(g>>8) + uint64(bl>>8)
+			n += 3
+		}
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return float64(sum) / float64(n), true
+}
+
 func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	mediaID := r.URL.Query().Get("id")
 	if mediaID == "" {
@@ -80,9 +105,10 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		width = 1280
 	}
 
-	// v3 invalida frames antigos; o fingerprint invalida o thumb quando o
-	// arquivo muda no mesmo caminho (mediaID é hash do caminho).
-	key := thumbKey("v3:"+mediaID+thumbFingerprint(mediaPath), width)
+	// v4 invalida thumbs antigos (inclui pretos aceitos pelo seletor anterior);
+	// o fingerprint invalida o thumb quando o arquivo muda no mesmo caminho
+	// (mediaID é hash do caminho).
+	key := thumbKey("v4:"+mediaID+thumbFingerprint(mediaPath), width)
 	dst := filepath.Join(s.cacheDir, "thumbs", key)
 
 	if data, err := os.ReadFile(dst); err == nil {
@@ -159,23 +185,48 @@ func (s *server) buildThumb(srcPath, dst string, width int) error {
 		}
 	}
 
-	// Frames iniciais costumam ser logos/tela preta; tenta uma cena já estabelecida.
+	// Fast-seek costuma cair em fade/tela preta mesmo com saída OK do
+	// ffmpeg; avalia o brilho e fica com o primeiro frame não-preto.
+	best, bestLuma := "", -1.0
 	for _, ss := range []string{"30", "10", "5", "1"} {
+		tmpSS := tmp + "." + ss
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-y", "-v", "error",
 			"-ss", ss, "-i", srcPath, "-frames:v", "1",
 			"-vf", fmt.Sprintf("scale=%d:-2:force_original_aspect_ratio=decrease", width),
-			"-q:v", "4", "-f", "mjpeg", tmp)
+			"-q:v", "4", "-f", "mjpeg", tmpSS)
 		err := cmd.Run()
 		cancel()
-		if err == nil {
-			if fi, err := os.Stat(tmp); err == nil && fi.Size() > 0 {
-				return os.Rename(tmp, dst)
+		if err != nil {
+			os.Remove(tmpSS)
+			continue
+		}
+		fi, err := os.Stat(tmpSS)
+		if err != nil || fi.Size() == 0 {
+			os.Remove(tmpSS)
+			continue
+		}
+		luma, ok := frameBrightness(tmpSS)
+		if !ok {
+			os.Remove(tmpSS)
+			continue
+		}
+		if luma > bestLuma {
+			if best != "" {
+				os.Remove(best)
 			}
+			best, bestLuma = tmpSS, luma
+		} else {
+			os.Remove(tmpSS)
+		}
+		if bestLuma >= 12 {
+			break
 		}
 	}
-	os.Remove(tmp)
-	return fmt.Errorf("ffmpeg falhou para gerar thumb de %s", srcPath)
+	if best == "" {
+		return fmt.Errorf("ffmpeg falhou para gerar thumb de %s", srcPath)
+	}
+	return os.Rename(best, dst)
 }
 
 func scaleFit(src image.Image, maxW int) image.Image {

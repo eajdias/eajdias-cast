@@ -147,6 +147,9 @@ func main() {
 	mediaDir := env("MEDIA_DIR", "/data/media")
 	cacheDir := env("CACHE_DIR", "/data/cache")
 	password := env("PASSWORD", "cast123")
+	if v, ok := os.LookupEnv("PASSWORD"); ok {
+		password = v // vazio desabilita o login (rede local de confiança)
+	}
 	port := env("PORT", "8080")
 
 	// Autodetectar estrutura dentro de MEDIA_DIR se fornecido
@@ -232,6 +235,7 @@ func main() {
 	// API Gerais
 	mux.HandleFunc("GET /api/overview", srv.requireAuth(srv.handleOverview))
 	mux.HandleFunc("POST /api/progress", srv.requireAuth(srv.handleProgress))
+	mux.HandleFunc("DELETE /api/progress", srv.requireAuth(srv.handleProgressDelete))
 	mux.HandleFunc("POST /api/favorite", srv.requireAuth(srv.handleFavorite))
 	mux.HandleFunc("GET /api/thumb", srv.requireAuth(srv.handleThumb))
 
@@ -503,6 +507,16 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.db.SaveProgress(body.MediaID, body.Position, body.Total, body.Completed)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *server) handleProgressDelete(w http.ResponseWriter, r *http.Request) {
+	mediaID := r.URL.Query().Get("media_id")
+	if mediaID == "" {
+		http.Error(w, "media_id obrigatório", http.StatusBadRequest)
+		return
+	}
+	s.db.DeleteProgress(mediaID)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

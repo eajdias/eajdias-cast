@@ -55,6 +55,15 @@ func (s *dbStore) SaveProgress(mediaID string, position, total float64, complete
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Concluído é pegajoso: reabrir e fechar um título terminado não
+	// o traz de volta ao "Continuar".
+	if !completed {
+		var done int
+		if err := s.db.QueryRow(`SELECT completed FROM progress WHERE media_id = ?`, mediaID).Scan(&done); err == nil && done == 1 {
+			completed = true
+		}
+	}
+
 	compInt := 0
 	if completed {
 		compInt = 1
@@ -109,6 +118,13 @@ func (s *dbStore) GetAllProgress() map[string]ProgressRec {
 		}
 	}
 	return res
+}
+
+func (s *dbStore) DeleteProgress(mediaID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec(`DELETE FROM progress WHERE media_id = ?`, mediaID)
 }
 
 func (s *dbStore) ToggleFavorite(mediaID string) bool {

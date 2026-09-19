@@ -29,10 +29,10 @@ PORT=8080 PASSWORD=cast123 MEDIA_DIR=/tmp/opencode/media CACHE_DIR=/tmp/opencode
 
 - `main.go`: routing (`net/http` ServeMux with `GET /{$}` pattern), 30s rescan throttle (`rescanIfNeeded`, I/O outside the write lock), background pre-index at startup.
 - `cinema.go`: video scan/grouping, `ffprobe` for audio/subtitle tracks, `ffmpeg` for embedded-subtitle extraction. `http.ServeContent` handles Range/`206` — do not reimplement.
-- `thumbs.go`: video thumbs shell out to `ffmpeg`, max 2 concurrent (`s.sem`). Requires `ffmpeg`+`ffprobe` on PATH locally (Docker image installs them); without them video thumbs/subs fail.
+- `thumbs.go`: video thumbs shell out to `ffmpeg`, max 2 concurrent (`s.sem`). Frame candidates (ss 30/10/5/1) pass a brightness check — first non-black wins, v4 cache key includes mtime+size. Requires `ffmpeg`+`ffprobe` on PATH locally (Docker image installs them); without them video thumbs/subs fail.
 - `manga.go`: reads `.cbz`/`.zip`/image dirs without extracting; natural sort (`Cap 2` < `Cap 10`).
 - `music.go`: `github.com/dhowden/tag` for ID3 + embedded covers.
-- `db.go`: pure-Go `modernc.org/sqlite`, `CGO_ENABLED=0` (see `Dockerfile`). Progress + favorites tables only.
+- `db.go`: pure-Go `modernc.org/sqlite`, `CGO_ENABLED=0` (see `Dockerfile`). Progress + favorites tables only. Progress `completed` sticks (reopen+close won't un-complete); dismiss via `DELETE /api/progress?media_id=`; video saves <3s are skipped client-side.
 - `auth.go`: HMAC cookie `cast_session` (30d, HttpOnly, Lax). `/api/*` returns `401` JSON; browser paths redirect to `/login`.
 - `static/` changes require rebuild (embedded). `handleIndex` cache-busts `app.js`/`style.css` via content hash.
 - Container runs as uid `20000` (`cast`); media mount is `:ro`.

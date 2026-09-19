@@ -1,6 +1,8 @@
 package main
 
 import (
+	"image"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,5 +87,57 @@ func TestEmptyListsEncodeAsArrays(t *testing.T) {
 		if body := strings.TrimSpace(rec.Body.String()); body == "null" {
 			t.Errorf("%s: encodes null, want []", path)
 		}
+	}
+}
+
+func TestSaveProgressCompletedSticks(t *testing.T) {
+	s := initDB(t.TempDir())
+	if err := s.SaveProgress("m1", 100, 100, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveProgress("m1", 5, 100, false); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := s.GetProgress("m1")
+	if !ok || !rec.Completed {
+		t.Fatalf("completed was clobbered: %+v ok=%v", rec, ok)
+	}
+}
+
+func TestDeleteProgress(t *testing.T) {
+	s := initDB(t.TempDir())
+	if err := s.SaveProgress("m1", 10, 100, false); err != nil {
+		t.Fatal(err)
+	}
+	s.DeleteProgress("m1")
+	if _, ok := s.GetProgress("m1"); ok {
+		t.Fatal("progress still present after delete")
+	}
+}
+
+func TestFrameBrightnessBlackVsWhite(t *testing.T) {
+	write := func(c uint8) string {
+		img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+		for i := range img.Pix {
+			img.Pix[i] = c
+		}
+		p := filepath.Join(t.TempDir(), string([]byte{'f', '0' + c/255})+".jpg")
+		f, err := os.Create(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := jpeg.Encode(f, img, nil); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		return p
+	}
+	black, ok := frameBrightness(write(0))
+	if !ok || black >= 12 {
+		t.Fatalf("black frame luma=%v ok=%v, want <12", black, ok)
+	}
+	white, ok := frameBrightness(write(255))
+	if !ok || white < 200 {
+		t.Fatalf("white frame luma=%v ok=%v, want >200", white, ok)
 	}
 }
