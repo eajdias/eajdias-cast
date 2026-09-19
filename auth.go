@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -25,7 +26,7 @@ func getOrInitSecret(path string) []byte {
 }
 
 func signSession(secret []byte, user string, expiresAt int64) string {
-	msg := user + ":" + string(rune(expiresAt))
+	msg := user + ":" + strconv.FormatInt(expiresAt, 10)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(msg))
 	sig := hex.EncodeToString(mac.Sum(nil))

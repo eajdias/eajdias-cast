@@ -71,16 +71,31 @@ func (s *server) rescanIfNeeded() {
 	}
 	s.mu.RUnlock()
 
+	// I/O pesado (ffprobe por arquivo, zips, tags ID3) fora do lock de
+	// escrita: antes o Lock() envolvia o scan inteiro e travava todas
+	// as APIs e thumbs. cinemaDirs/mangaDir/musicDir são fixos no startup.
+	cinemaGroups, cinemaMedia := scanCinema(s.cinemaDirs...)
+	mangaList, mangaCovers := scanManga(s.mangaDir)
+	musicList, trackMap := scanMusic(s.musicDir)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if time.Since(s.lastScan) < 30*time.Second && s.cinemaItems != nil {
-		return
+		return // outra goroutine já atualizou enquanto escaneávamos
 	}
 
-	cinemaGroups, cinemaMedia := scanCinema(s.cinemaDirs...)
-	mangaList, mangaCovers := scanManga(s.mangaDir)
-	musicList, trackMap := scanMusic(s.musicDir)
+	// Listas nunca nil: biblioteca vazia deve serializar como [] e
+	// manter o throttle do rescan funcionando.
+	if cinemaGroups == nil {
+		cinemaGroups = []VideoGroup{}
+	}
+	if mangaList == nil {
+		mangaList = []MangaSeries{}
+	}
+	if musicList == nil {
+		musicList = []AlbumGroup{}
+	}
 
 	mangaCh := make(map[string]MangaChapter)
 	mangaChapterCover := make(map[string]string)
@@ -293,7 +308,7 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		CoverURL  string  `json:"cover_url,omitempty"`
 	}
 
-	var continueList []ContinueItem
+	continueList := []ContinueItem{}
 	for mediaID, prog := range allProgress {
 		if prog.Completed || prog.Position <= 0 {
 			continue
@@ -343,7 +358,7 @@ func (s *server) handleCinemaList(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	items := append([]VideoGroup(nil), s.cinemaItems...)
+	items := append([]VideoGroup{}, s.cinemaItems...)
 	for i := range items {
 		items[i].CoverURL = "/api/thumb?id=" + items[i].ID
 	}
@@ -382,9 +397,9 @@ func (s *server) handleCinemaSub(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
 	subID := r.URL.Query().Get("id")
 	s.mu.RLock()
-	sub := s.subtitleMap[subID]
+	sub, ok := s.subtitleMap[subID]
 	s.mu.RUnlock()
-	if sub.Path == "" && sub.StreamIndex == 0 {
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -399,7 +414,11 @@ func (s *server) handleMangaList(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	writeJSON(w, http.StatusOK, s.mangaItems)
+	items := s.mangaItems
+	if items == nil {
+		items = []MangaSeries{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *server) handleMangaPage(w http.ResponseWriter, r *http.Request) {
@@ -423,7 +442,11 @@ func (s *server) handleMusicList(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	writeJSON(w, http.StatusOK, s.musicAlbums)
+	items := s.musicAlbums
+	if items == nil {
+		items = []AlbumGroup{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *server) handleMusicCover(w http.ResponseWriter, r *http.Request) {

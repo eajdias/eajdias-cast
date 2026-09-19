@@ -31,6 +31,14 @@ func thumbKey(name string, width int) string {
 	return hex.EncodeToString(sum[:])[:20] + "_" + strconv.Itoa(width) + ".jpg"
 }
 
+func thumbFingerprint(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return "|" + strconv.FormatInt(fi.ModTime().Unix(), 10) + "|" + strconv.FormatInt(fi.Size(), 10)
+}
+
 func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	mediaID := r.URL.Query().Get("id")
 	if mediaID == "" {
@@ -72,13 +80,14 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		width = 1280
 	}
 
-	// v2 invalida frames antigos (normalmente pretos nos primeiros segundos).
-	key := thumbKey("v2:"+mediaID, width)
+	// v3 invalida frames antigos; o fingerprint invalida o thumb quando o
+	// arquivo muda no mesmo caminho (mediaID é hash do caminho).
+	key := thumbKey("v3:"+mediaID+thumbFingerprint(mediaPath), width)
 	dst := filepath.Join(s.cacheDir, "thumbs", key)
 
 	if data, err := os.ReadFile(dst); err == nil {
 		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.Write(data)
 		return
 	}
@@ -89,7 +98,7 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		<-c.done
 		if data, err := os.ReadFile(dst); err == nil {
 			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 			w.Write(data)
 			return
 		}
@@ -122,7 +131,7 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(data)
 }
 

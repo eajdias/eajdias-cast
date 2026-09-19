@@ -113,9 +113,12 @@ func isSubtitleFile(name string) bool {
 }
 
 var (
-	epRegex1      = regexp.MustCompile(`(?i)[sS]([0-9]{1,2})[eE]([0-9]{1,2})`)
-	epRegex2      = regexp.MustCompile(`(?i)(?:ep|episodio|episode|e)[_.\s-]*([0-9]{1,3})`)
-	seasonRegex   = regexp.MustCompile(`(?i)(?:temporada|season|s)[_.\s-]*([0-9]{1,2})`)
+	epRegex1 = regexp.MustCompile(`(?i)[sS]([0-9]{1,2})[eE]([0-9]{1,2})`)
+	// O prefixo (^|separador) impede que o "e" de "Dune 2" ou "Se7en"
+	// seja lido como marcador de episódio. RE2 não tem lookbehind,
+	// por isso o separador faz parte do match (só o grupo 1 importa).
+	epRegex2      = regexp.MustCompile(`(?i)(?:^|[\s._\-\[\(])(?:ep|episodio|episode|e)[_.\s-]*([0-9]{1,3})`)
+	seasonRegex   = regexp.MustCompile(`(?i)(?:^|[\s._\-\[\(])(?:temporada|season|s)[_.\s-]*([0-9]{1,2})`)
 	releaseSuffix = regexp.MustCompile(`(?i)[. _-]+(?:s\d{1,2}e\d{1,3}|\d{3,4}p|web[ ._-]?dl|webrip|bluray|brrip|x26[45]|h\.?(?:264|265)|hevc|avc|dual|aac|dts|ddp|proper|repack|remux|10bit|5\.1|2\.0).*`)
 )
 
