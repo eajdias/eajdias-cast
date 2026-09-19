@@ -99,12 +99,7 @@ func (s *server) rescanIfNeeded() {
 
 	mangaCh := make(map[string]MangaChapter)
 	mangaChapterCover := make(map[string]string)
-	subtitles := make(map[string]subtitleRef)
-	for _, video := range cinemaMedia {
-		for _, sub := range video.Subtitles {
-			subtitles[sub.ID] = subtitleRef{Path: sub.Path, StreamIndex: sub.StreamIndex}
-		}
-	}
+	subtitles := indexSubtitles(cinemaMedia)
 	for _, m := range mangaList {
 		for _, ch := range m.Chapters {
 			mangaCh[ch.ID] = ch
@@ -122,6 +117,16 @@ func (s *server) rescanIfNeeded() {
 	s.musicAlbums = musicList
 	s.musicMap = trackMap
 	s.lastScan = time.Now()
+}
+
+func indexSubtitles(cinemaMedia map[string]VideoMedia) map[string]subtitleRef {
+	subtitles := make(map[string]subtitleRef)
+	for _, video := range cinemaMedia {
+		for _, sub := range video.Subtitles {
+			subtitles[sub.ID] = subtitleRef{Path: sub.Path, MediaPath: video.Path, StreamIndex: sub.StreamIndex}
+		}
+	}
+	return subtitles
 }
 
 func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -236,6 +241,11 @@ func main() {
 	mux.HandleFunc("GET /api/overview", srv.requireAuth(srv.handleOverview))
 	mux.HandleFunc("POST /api/progress", srv.requireAuth(srv.handleProgress))
 	mux.HandleFunc("DELETE /api/progress", srv.requireAuth(srv.handleProgressDelete))
+
+	// Tags customizadas por mídia
+	mux.HandleFunc("GET /api/tags", srv.requireAuth(srv.handleTagsList))
+	mux.HandleFunc("POST /api/tags", srv.requireAuth(srv.handleTagsAdd))
+	mux.HandleFunc("DELETE /api/tags", srv.requireAuth(srv.handleTagsDelete))
 	mux.HandleFunc("POST /api/favorite", srv.requireAuth(srv.handleFavorite))
 	mux.HandleFunc("GET /api/thumb", srv.requireAuth(srv.handleThumb))
 

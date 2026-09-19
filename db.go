@@ -43,6 +43,12 @@ func initDB(dataDir string) *dbStore {
 		media_id TEXT PRIMARY KEY,
 		created_at INTEGER NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS tags (
+		media_id TEXT NOT NULL,
+		tag TEXT NOT NULL,
+		PRIMARY KEY (media_id, tag)
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("Falha ao criar tabelas: %v", err)

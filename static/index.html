@@ -185,6 +185,7 @@
   <div class="video-container">
     <div class="modal-topbar">
       <span id="video-title" class="modal-title">Título</span>
+      <span id="video-meta" class="modal-meta"></span>
       <div class="video-track-controls">
         <select id="video-audio" class="select-btn" hidden aria-label="Faixa de áudio"></select>
         <select id="video-subs" class="select-btn" hidden aria-label="Legenda"></select>
@@ -192,6 +193,8 @@
       </div>
     </div>
     <video id="main-video" controls playsinline></video>
+    <span id="video-speed" class="speed-badge" hidden>2×</span>
+    <div id="video-tags"></div>
   </div>
 </div>
 

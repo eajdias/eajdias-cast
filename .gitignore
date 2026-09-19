@@ -9,3 +9,4 @@ data/music/*
 !data/music/.gitkeep
 cast
 *.tmp
+.playwright-cli/*

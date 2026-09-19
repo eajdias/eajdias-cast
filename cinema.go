@@ -31,7 +31,8 @@ type AudioTrack struct {
 }
 
 type subtitleRef struct {
-	Path        string
+	Path        string // legenda externa (.srt/.vtt); vazio = embutida no vídeo
+	MediaPath   string // arquivo de vídeo, para extrair legenda embutida
 	StreamIndex int
 }
 
@@ -366,7 +367,7 @@ func serveSubtitle(w http.ResponseWriter, r *http.Request, path string) {
 
 func serveEmbeddedSubtitle(w http.ResponseWriter, r *http.Request, sub subtitleRef) {
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	cmd := exec.CommandContext(r.Context(), "ffmpeg", "-nostdin", "-v", "error", "-i", sub.Path, "-map", "0:"+strconv.Itoa(sub.StreamIndex), "-f", "webvtt", "pipe:1")
+	cmd := exec.CommandContext(r.Context(), "ffmpeg", "-nostdin", "-v", "error", "-i", sub.MediaPath, "-map", "0:"+strconv.Itoa(sub.StreamIndex), "-f", "webvtt", "pipe:1")
 	cmd.Stdout = w
 	if err := cmd.Run(); err != nil {
 		http.Error(w, "Não foi possível converter a legenda", http.StatusInternalServerError)
@@ -376,6 +377,11 @@ func serveEmbeddedSubtitle(w http.ResponseWriter, r *http.Request, sub subtitleR
 // A troca de faixa produz MP4 fragmentado sob demanda: direct-play continua
 // como padrão e a conversão só é usada para a faixa escolhida pelo usuário.
 func (s *server) serveSelectedAudio(w http.ResponseWriter, r *http.Request, path string, audio int) {
+	// Remux não tem limite natural de concorrência (ao contrário do direct
+	// play): usa o mesmo semáforo dos thumbs para não empilhar ffmpeg de
+	// arquivos inteiros. Sem seek aqui: pipe fragmentado é linear.
+	s.sem <- struct{}{}
+	defer func() { <-s.sem }()
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-store")
 	cmd := exec.CommandContext(r.Context(), "ffmpeg", "-nostdin", "-v", "error", "-i", path,

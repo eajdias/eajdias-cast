@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"image"
 	"image/jpeg"
 	"net/http"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"testing"
 )
+
+func jsonDecodeBody(rec *httptest.ResponseRecorder, v any) error {
+	return json.NewDecoder(rec.Body).Decode(v)
+}
 
 func TestCategoryUsesMediaRoot(t *testing.T) {
 	cases := []struct{ root, want string }{
@@ -115,6 +120,26 @@ func TestDeleteProgress(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSubtitleKeepsVideoPath(t *testing.T) {
+	media := map[string]VideoMedia{
+		"v1": {
+			ID:   "v1",
+			Path: "/data/media/filmes/Filme.mkv",
+			Subtitles: []SubtitleTrack{
+				{ID: "emb", Label: "POR", Lang: "por", StreamIndex: 3},
+				{ID: "ext", Label: "Legenda", Lang: "pt", Path: "/data/media/filmes/Filme.srt"},
+			},
+		},
+	}
+	got := indexSubtitles(media)
+	if got["emb"].Path != "" || got["emb"].MediaPath != "/data/media/filmes/Filme.mkv" || got["emb"].StreamIndex != 3 {
+		t.Fatalf("embedded: %+v", got["emb"])
+	}
+	if got["ext"].Path != "/data/media/filmes/Filme.srt" {
+		t.Fatalf("external overwritten: %+v", got["ext"])
+	}
+}
+
 func TestFrameBrightnessBlackVsWhite(t *testing.T) {
 	write := func(c uint8) string {
 		img := image.NewRGBA(image.Rect(0, 0, 32, 32))
@@ -139,5 +164,56 @@ func TestFrameBrightnessBlackVsWhite(t *testing.T) {
 	white, ok := frameBrightness(write(255))
 	if !ok || white < 200 {
 		t.Fatalf("white frame luma=%v ok=%v, want >200", white, ok)
+	}
+}
+
+func TestTagsRoundtrip(t *testing.T) {
+	s := &server{db: initDB(t.TempDir())}
+
+	add := func(tag string) []string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/tags", strings.NewReader(`{"media_id":"m1","tag":"`+tag+`"}`))
+		s.handleTagsAdd(rec, req)
+		var d struct {
+			Tags []string `json:"tags"`
+		}
+		if err := jsonDecodeBody(rec, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d.Tags
+	}
+
+	if got := add("Ação"); len(got) != 1 || got[0] != "ação" {
+		t.Fatalf("add: got %v, want [ação]", got)
+	}
+	if got := add("Ação"); len(got) != 1 {
+		t.Fatalf("re-add must be idempotent: %v", got)
+	}
+	if got := add("  Ficção Top "); len(got) != 2 || got[1] != "ficção_top" {
+		t.Fatalf("normalize: %v", got)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleTagsList(rec, httptest.NewRequest("GET", "/api/tags?media_id=m1", nil))
+	var list struct {
+		Tags []string `json:"tags"`
+	}
+	if err := jsonDecodeBody(rec, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Tags) != 2 {
+		t.Fatalf("list: %v", list.Tags)
+	}
+
+	rec = httptest.NewRecorder()
+	s.handleTagsDelete(rec, httptest.NewRequest("DELETE", "/api/tags?media_id=m1&tag=a%C3%A7%C3%A3o", nil))
+	var after struct {
+		Tags []string `json:"tags"`
+	}
+	if err := jsonDecodeBody(rec, &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Tags) != 1 || after.Tags[0] != "ficção_top" {
+		t.Fatalf("delete: %v", after.Tags)
 	}
 }

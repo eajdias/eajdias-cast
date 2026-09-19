@@ -557,6 +557,55 @@ body {
 }
 .video-track-controls { display:flex; align-items:center; gap:.35rem; }
 .video-track-controls .select-btn { max-width:150px; }
+.video-container { position: relative; }
+.modal-meta { font-size: 0.8rem; color: var(--text-muted); margin-left: 0.5rem; }
+.speed-badge {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+#video-tags { padding: 0.5rem 1.25rem; }
+.card-cover.wide { aspect-ratio: 16/9; }
+.tag-editor { padding: 0.75rem 0 0.25rem; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.5rem; }
+.tag-list:empty { margin-bottom: 0; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  padding: 2px 4px 2px 8px;
+  border-radius: 20px;
+}
+.tag-chip button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.tag-chip button:hover { color: #ff5555; }
+.tag-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+}
 
 /* Manga Reader - Lightbox Imersivo (estilo zub-vault) */
 .reader-overlay {
