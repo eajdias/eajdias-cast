@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(go:*)",
+      "Shell(node -c static/app.js 2 >& 1)",
+      "Shell(sleep:*)",
+      "Shell(curl -s http://localhost:8080/static/app.js)",
+      "Shell(mkdir:*)",
+      "Shell(kill $(lsof -t -i:8095) 2>/dev/null; rm -rf ~/test-cache; echo \"cleaned\")",
+      "Shell(curl -s http://localhost:8095/)",
+      "Shell(curl -s -c /tmp/cookies.txt -X POST http://localhost:8095/login -d password=admin -L -o /tmp/page.html)",
+      "Shell(curl -v http://localhost:8095/ 2 >& 1)",
+      "Shell(curl -s -X POST http://localhost:8095/login -d password=admin -c /tmp/cookies.txt)",
+      "Shell(curl -s -b /tmp/cookies.txt http://localhost:8095/)",
+      "Shell(ps:*)",
+      "Shell(lsof:*)",
+      "Shell(ss:*)",
+      "Shell(cat /proc/$(lsof -t -i:8095 | head -1)/cmdline 2>/dev/null | tr '\\0' ' ' || echo \"process not found\")",
+      "Shell(sudo lsof -i:8095 2 > /dev/null)",
+      "Shell(netstat:*)",
+      "Shell(docker:*)",
+      "Shell(docker exec eajdias-cast which cast && docker exec eajdias-cast ls -la $(which cast))",
+      "Shell(strings:*)",
+      "Shell(curl -v -X POST http://localhost:8095/login -d password=admin -c /tmp/cookies.txt 2 >& 1)",
+      "Shell(curl -s -X POST http://localhost:8095/login -d password=cast123 -c /tmp/cookies.txt)",
+      "Shell(curl -s -b /tmp/cookies.txt http://localhost:8095/static/app.js)",
+      "Shell(curl -s -b /tmp/cookies.txt http://localhost:8095/static/style.css)",
+      "Shell(docker rm -f eajdias-cast 2>/dev/null; echo \"done\")"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

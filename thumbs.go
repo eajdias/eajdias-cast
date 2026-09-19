@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	_ "golang.org/x/image/bmp"
@@ -33,8 +32,34 @@ func thumbKey(name string, width int) string {
 }
 
 func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
-	mediaPath := r.URL.Query().Get("path")
-	if mediaPath == "" || strings.Contains(mediaPath, "..") {
+	mediaID := r.URL.Query().Get("id")
+	if mediaID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	s.rescanIfNeeded()
+	s.mu.RLock()
+	mediaPath := ""
+	if v, ok := s.cinemaMap[mediaID]; ok {
+		mediaPath = v.Path
+	}
+	if mediaPath == "" {
+		for _, g := range s.cinemaItems {
+			if g.ID != mediaID {
+				continue
+			}
+			if g.coverPath != "" {
+				mediaPath = g.coverPath
+			} else if len(g.Episodes) > 0 {
+				mediaPath = g.Episodes[0].Path
+			} else if g.Movie != nil {
+				mediaPath = g.Movie.Path
+			}
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if mediaPath == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -47,7 +72,8 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		width = 1280
 	}
 
-	key := thumbKey(mediaPath, width)
+	// v2 invalida frames antigos (normalmente pretos nos primeiros segundos).
+	key := thumbKey("v2:"+mediaID, width)
 	dst := filepath.Join(s.cacheDir, "thumbs", key)
 
 	if data, err := os.ReadFile(dst); err == nil {
@@ -124,8 +150,8 @@ func (s *server) buildThumb(srcPath, dst string, width int) error {
 		}
 	}
 
-	// Se for vídeo: usa ffmpeg para pegar o frame no segundo 5 ou 1
-	for _, ss := range []string{"5", "1", "0"} {
+	// Frames iniciais costumam ser logos/tela preta; tenta uma cena já estabelecida.
+	for _, ss := range []string{"30", "10", "5", "1"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-y", "-v", "error",
 			"-ss", ss, "-i", srcPath, "-frames:v", "1",

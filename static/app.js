@@ -1,637 +1,70 @@
-// Estado Global da Aplicação
-const state = {
-  activeTab: 'home',
-  selectedCinemaCat: 'all',
-  overview: null,
-  cinema: [],
-  manga: [],
-  music: [],
-  currentVideo: null,
-  videoProgInterval: null,
-  currentMangaCh: null,
-  currentMangaPage: 0,
-  mangaMode: 'webtoon',
-  playlist: [],
-  currentTrackIdx: -1,
-  audioEl: document.getElementById('global-audio')
-};
-
-// Inicialização
-document.addEventListener('DOMContentLoaded', () => {
-  setupNavigation();
-  setupAudioPlayer();
-  setupVideoPlayer();
-  setupMangaReader();
-  loadOverview();
-  
-  // Atualizar com base na hash da URL se houver
-  const hash = window.location.hash.replace('#', '');
-  if (['home', 'cinema', 'manga', 'music'].includes(hash)) {
-    switchTab(hash);
-  } else {
-    switchTab('home');
-  }
-});
-
-// Navegação entre Abas
-function setupNavigation() {
-  document.querySelectorAll('.nav-tab, .bnav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.getAttribute('data-tab');
-      switchTab(tab);
-    });
+const state={activeTab:'home',selectedCinemaCat:'all',overview:null,cinema:[],manga:[],music:[],loaded:{},limits:{cinema:48,manga:48,music:48},currentVideo:null,videoProgInterval:null,currentMangaCh:null,currentMangaPage:0,readerSpan:1,readerHistory:[],playlist:[],currentTrackIdx:-1,shuffle:false,repeat:'all',fading:false,audioEl:document.getElementById('global-audio'),readerObserver:null};
+const $=s=>document.querySelector(s),esc=(s='')=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login';throw Error('unauthorized')}if(!r.ok)throw Error(`${r.status} ${url}`);return r.json()}
+document.addEventListener('DOMContentLoaded',()=>{setupNavigation();setupAudio();setupVideo();setupReader();loadOverview();switchTab(['home','cinema','manga','music'].includes(location.hash.slice(1))?location.hash.slice(1):'home')});
+function setupNavigation(){document.querySelectorAll('.nav-tab,.bnav-btn').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));document.querySelectorAll('#cinema-filters .cat-chip').forEach(b=>b.onclick=()=>{document.querySelectorAll('#cinema-filters .cat-chip').forEach(x=>x.classList.toggle('active',x===b));state.selectedCinemaCat=b.dataset.cat;renderCinema($('#search-cinema').value)});[['#search-cinema',renderCinema],['#search-manga',renderManga],['#search-music',renderMusic]].forEach(([s,f])=>$(s).oninput=e=>f(e.target.value))}
+function switchTab(tab){state.activeTab=tab;location.hash=tab;closeDetail();document.querySelectorAll('.nav-tab,.bnav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));document.querySelectorAll('.view-tab').forEach(v=>v.classList.toggle('active',v.id===`tab-${tab}`));if(tab!=='home')loadCatalog(tab)}
+async function loadCatalog(k){if(state.loaded[k])return;try{state[k]=await api(`/api/${k}`);state.loaded[k]=true;({cinema:renderCinema,manga:renderManga,music:renderMusic}[k])()}catch(e){console.error(e)}}
+async function loadOverview(){try{state.overview=await api('/api/overview');const c=state.overview.counts;$('#stat-cinema').textContent=c.cinema||0;$('#stat-manga').textContent=c.manga||0;$('#stat-music').textContent=c.music||0;const g=$('#continue-grid'),items=(state.overview.continue||[]).sort((a,b)=>b.updated_at-a.updated_at);g.replaceChildren();if(!items.length){g.innerHTML='<div class="empty-state">Nenhum item em andamento no momento.</div>';return}items.forEach(x=>g.appendChild(card(x,()=>resume(x),x.cover_url,x.type==='manga'?'Mangá':'Vídeo',x.total?Math.round(x.position/x.total*100):0)))}catch(e){console.error(e)}}
+function image(url,alt){const i=new Image();i.loading='lazy';i.decoding='async';i.alt=alt;i.src=url||'';i.onload=()=>i.classList.add('ready');i.onerror=()=>i.classList.add('failed');return i}
+function card(x,click,cover,badge,pct){const c=document.createElement('button');c.type='button';c.className='media-card';c.onclick=click;const d=document.createElement('div');d.className='card-cover';d.append(image(cover,x.title||x.album));const b=document.createElement('span');b.className='card-badge';b.textContent=badge;d.append(b);const t=document.createElement('div');t.className='card-details';t.innerHTML=`<div class="card-title">${esc(x.title||x.album)}</div><div class="card-subtitle">${esc(x.subtitle||'')}</div>${pct===undefined?'':`<div class="card-progress"><div class="card-progress-bar" style="width:${pct}%"></div></div>`}`;c.append(d,t);return c}
+function paged(grid,items,k,make){grid.replaceChildren();const a=items.slice(0,state.limits[k]);if(!a.length){grid.innerHTML='<div class="empty-state">Nenhum item encontrado.</div>';return}a.forEach(make);if(a.length<items.length){const b=document.createElement('button');b.className='load-more';b.textContent='Carregar mais';b.onclick=()=>{state.limits[k]+=48;({cinema:renderCinema,manga:renderManga,music:renderMusic}[k])()};grid.after(b)}}
+function clearMore(){document.querySelectorAll('.load-more').forEach(x=>x.remove())}
+function renderCinema(q=''){clearMore();q=q.toLowerCase();let a=state.cinema.filter(x=>x.title.toLowerCase().includes(q));if(state.selectedCinemaCat!=='all')a=a.filter(x=>x.category===state.selectedCinemaCat);paged($('#cinema-grid'),a,'cinema',x=>{const sub=x.type==='show'?`${x.episodes.length} episódios`:(x.category==='filme'?'Filme':'Vídeo');$('#cinema-grid').appendChild(card({...x,subtitle:sub},()=>x.type==='show'?episodes(x):openVideo(x.movie.id),x.cover_url,x.category==='serie'?'Série':x.category==='anime'?'Anime':sub))})}
+function episodes(x){detail(x.title,x.episodes.map(e=>`<button class="item-row" data-video="${e.id}"><span class="item-row-left"><span class="item-row-title">T${e.season}E${e.episode} · ${esc(e.title)}</span><span class="item-row-sub">${e.subtitles?.length?'Legendas disponíveis':''}</span></span><span>▶</span></button>`).join(''));document.querySelectorAll('[data-video]').forEach(b=>b.onclick=()=>openVideo(b.dataset.video))}
+function renderManga(q=''){clearMore();q=q.toLowerCase();const a=state.manga.filter(x=>x.title.toLowerCase().includes(q));paged($('#manga-grid'),a,'manga',x=>$('#manga-grid').appendChild(card({...x,subtitle:`${x.chapters.length} capítulos`},()=>chapters(x),x.cover_url,`${x.chapters.length} caps`)))}
+function chapters(x){
+  const totalChapters=x.chapters.length;
+  const intro=`<div class="manga-intro-card"><div class="manga-intro-cover"><img src="${x.cover_url}" alt=""><div class="manga-intro-overlay"><span class="manga-intro-badge">📖 Mangá</span></div></div><div class="manga-intro-info"><h4>${esc(x.title)}</h4><div class="manga-intro-stats"><span class="manga-stat"><b>${totalChapters}</b> capítulos</span></div></div></div><button class="read-first" data-chapter="${x.chapters[0].id}">▶ Ler do início</button><div class="chapter-section-title">Capítulos</div>`;
+  const chapterList=x.chapters.map((c,i)=>{const num=c.title.replace(/[^0-9]/g,'')||(i+1);return `<button class="chapter-card" data-chapter="${c.id}"><span class="chapter-num">${num}</span><div class="chapter-info"><span class="chapter-name">${esc(c.title)}</span><span class="chapter-meta">${c.page_count} páginas</span></div><span class="chapter-arrow">›</span></button>`}).join('');
+  detail(x.title,intro+chapterList);
+  document.querySelectorAll('[data-chapter]').forEach(b=>b.onclick=()=>openChapter(b.dataset.chapter))
+}
+function renderMusic(q=''){clearMore();q=q.toLowerCase();const a=state.music.filter(x=>x.album.toLowerCase().includes(q)||x.artist.toLowerCase().includes(q));paged($('#music-grid'),a,'music',x=>{const c=card({title:x.album,subtitle:`${x.artist} · ${x.tracks.length} faixas`},()=>{album(x);playAlbum(x,0)},`/api/music/cover?id=${encodeURIComponent(x.cover_id)}`,'Álbum');c.querySelector('.card-cover').classList.add('square');$('#music-grid').appendChild(c)})}
+function album(x){detail(`${x.artist} · ${x.album}`,x.tracks.map((t,i)=>`<button class="item-row" data-track="${i}"><span class="item-row-left"><span class="item-row-title">${t.track_number?t.track_number+'. ':''}${esc(t.title)}</span><span class="item-row-sub">${esc(t.artist)}</span></span><span>▶</span></button>`).join(''));document.querySelectorAll('[data-track]').forEach(b=>b.onclick=()=>playAlbum(x,+b.dataset.track))}
+function detail(title,rows){const d=$('#library-detail'),side=['manga','music'].includes(state.activeTab);d.classList.toggle('media-sidebar',side);d.innerHTML=`<div class="detail-head"><h3>${esc(title)}</h3><button class="icon-btn" id="detail-close">✕</button></div><div class="detail-list">${rows}</div>`;d.hidden=false;$('#detail-close').onclick=closeDetail;if(!side)d.scrollIntoView({behavior:'smooth',block:'nearest'})}function closeDetail(){const d=$('#library-detail');d.hidden=true;d.classList.remove('media-sidebar');d.replaceChildren()}
+async function resume(x){if(x.type==='manga'){await loadCatalog('manga');openChapter(x.id,Math.max(0,Math.round(x.position)-1))}else{await loadCatalog('cinema');openVideo(x.id)}}
+function findVideo(id){for(const x of state.cinema){if(x.movie?.id===id)return x.movie;const e=x.episodes?.find(y=>y.id===id);if(e)return e}}
+state._restorePos=0;
+function setupVideo(){$('#video-close').onclick=closeVideo;$('#video-audio').onchange=e=>switchAudio(+e.target.value);$('#video-subs').onchange=e=>switchSubtitle(e.target.value);addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#video-modal').hidden)closeVideo()})}
+function openVideo(id){const m=findVideo(id),v=$('#main-video');if(!m)return;closeDetail();if(!state.audioEl.paused)state.audioEl.pause();state.currentVideo=id;state.currentMedia=m;const existing=state.overview?.continue?.find(x=>x.id===id);state._restorePos=existing?.position||0;buildVideoSource(0);const au=$('#video-audio'),su=$('#video-subs');au.replaceChildren();(m.audio_tracks||[]).forEach((x,i)=>au.add(new Option(`${x.label} · ${x.codec}`,i)));au.hidden=(m.audio_tracks||[]).length<2;su.replaceChildren();su.add(new Option('Sem legenda','-1'));(m.subtitles||[]).forEach((x,i)=>su.add(new Option(x.label,String(i))));su.hidden=!(m.subtitles||[]).length;$('#video-title').textContent=m.title;$('#video-modal').hidden=false;v.addEventListener('loadedmetadata',()=>{v.play().catch(()=>{})},{once:true});clearInterval(state.videoProgInterval);state.videoProgInterval=setInterval(()=>{if(v.duration&&!v.paused)save(id,v.currentTime,v.duration,v.currentTime>=v.duration-10)},5000)}
+function buildVideoSource(audio){const v=$('#main-video'),m=state.currentMedia,id=state.currentVideo,at=Number.isInteger(audio)?audio:0;v.replaceChildren();const s=document.createElement('source');s.src=`/api/cinema/stream?id=${encodeURIComponent(id)}${at?`&audio=${at}`:''}`;v.append(s);(m.subtitles||[]).forEach((x,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=x.label;t.srclang=x.lang;t.src=`/api/cinema/sub?id=${encodeURIComponent(x.id)}`;if(i===0)t.default=true;v.append(t)});const pos=state._restorePos||0;v.addEventListener('loadedmetadata',()=>{if(pos>0)v.currentTime=pos;state._restorePos=0},{once:true});v.load()}
+function switchAudio(i){const v=$('#main-video'),pos=v.currentTime,wasPlaying=!v.paused;state._restorePos=pos;buildVideoSource(i);v.addEventListener('loadedmetadata',()=>{v.currentTime=pos;if(wasPlaying)v.play().catch(()=>{})},{once:true})}
+function switchSubtitle(subId){const tracks=$('#main-video').textTracks;if(subId==='-1'||subId===-1){for(let n=0;n<tracks.length;n++)tracks[n].mode='disabled';return}const idx=parseInt(subId,10);if(isNaN(idx))return;for(let n=0;n<tracks.length;n++)tracks[n].mode=n===idx?'showing':'disabled'}
+function closeVideo(){const v=$('#main-video');if(state.currentVideo&&v.duration)save(state.currentVideo,v.currentTime,v.duration,v.currentTime>=v.duration-10);clearInterval(state.videoProgInterval);v.pause();v.replaceChildren();$('#video-modal').hidden=true;state.currentVideo=null;loadOverview()}async function save(id,position,total,completed){try{await api('/api/progress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_id:id,position,total,completed})})}catch(e){console.error(e)}}
+state.readerZoom={scale:1,x:0,y:0};
+state.readerImmersive=false;
+function setupReader(){
+  $('#reader-close').onclick=closeReader;
+  $('#reader-prev-btn').onclick=()=>navigatePage(-1);
+  $('#reader-next-btn').onclick=()=>navigatePage(1);
+  const canvas=$('#reader-canvas');
+  let lastTap=0;
+  canvas.addEventListener('click',e=>{
+    if(state.readerZoom.scale>1)return;
+    const now=Date.now();
+    if(now-lastTap<300){lastTap=0;if(state.readerZoom.scale>1)resetReaderZoom();else zoomReaderAt(e.clientX,e.clientY,2);return}
+    lastTap=now;toggleImmersive()
   });
-
-  // Filtros de Categoria do Cinema
-  document.querySelectorAll('#cinema-filters .cat-chip').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#cinema-filters .cat-chip').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.selectedCinemaCat = btn.getAttribute('data-cat');
-      const searchVal = document.getElementById('search-cinema')?.value || '';
-      renderCinema(searchVal);
-    });
-  });
-
-  // Buscas
-  document.getElementById('search-cinema')?.addEventListener('input', e => renderCinema(e.target.value));
-  document.getElementById('search-manga')?.addEventListener('input', e => renderManga(e.target.value));
-  document.getElementById('search-music')?.addEventListener('input', e => renderMusic(e.target.value));
+  let tX=0,tY=0;
+  canvas.addEventListener('touchstart',e=>{if(state.readerZoom.scale>1)return;const t=e.changedTouches[0];tX=t.clientX;tY=t.clientY},{passive:true});
+  canvas.addEventListener('touchend',e=>{if(state.readerZoom.scale>1)return;const t=e.changedTouches[0];const dx=t.clientX-tX,dy=t.clientY-tY;if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5){if(dx<0)navigatePage(1);else navigatePage(-1)}},{passive:true});
+  let pinchDist=0;
+  canvas.addEventListener('touchstart',e=>{if(e.touches.length===2)pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)},{passive:true});
+  canvas.addEventListener('touchmove',e=>{if(e.touches.length===2){e.preventDefault();const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);const ns=Math.min(3,Math.max(1,state.readerZoom.scale*(d/pinchDist)));state.readerZoom.scale=ns;applyReaderZoom();pinchDist=d}},{passive:false});
+  addEventListener('keydown',e=>{if($('#reader-modal').hidden)return;if(e.key==='Escape')closeReader();if(e.key==='ArrowLeft')navigatePage(-1);if(e.key==='ArrowRight')navigatePage(1)});
+  let hideTimer=null;
+  $('#reader-modal').addEventListener('mousemove',()=>{$('#reader-modal').classList.remove('immersive');clearTimeout(hideTimer);hideTimer=setTimeout(()=>$('#reader-modal').classList.add('immersive'),3000)})
 }
-
-function switchTab(tabName) {
-  state.activeTab = tabName;
-  window.location.hash = tabName;
-
-  document.querySelectorAll('.nav-tab, .bnav-btn').forEach(btn => {
-    if (btn.getAttribute('data-tab') === tabName) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
-
-  document.querySelectorAll('.view-tab').forEach(view => {
-    view.classList.remove('active');
-  });
-  document.getElementById(`tab-${tabName}`)?.classList.add('active');
-
-  if (tabName === 'cinema' && state.cinema.length === 0) loadCinema();
-  if (tabName === 'manga' && state.manga.length === 0) loadManga();
-  if (tabName === 'music' && state.music.length === 0) loadMusic();
-}
-
-// ----------------------------------------------------
-// 1. Visão Geral & Continuar de Onde Parou
-// ----------------------------------------------------
-async function loadOverview() {
-  try {
-    const res = await fetch('/api/overview');
-    if (!res.ok) return;
-    const data = await res.json();
-    state.overview = data;
-
-    document.getElementById('stat-cinema').textContent = data.counts.cinema || 0;
-    document.getElementById('stat-manga').textContent = data.counts.manga || 0;
-    document.getElementById('stat-music').textContent = data.counts.music || 0;
-
-    renderContinue(data.continue || []);
-  } catch (err) {
-    console.error('Erro ao carregar overview:', err);
-  }
-}
-
-function renderContinue(items) {
-  const grid = document.getElementById('continue-grid');
-  if (!items || items.length === 0) {
-    grid.innerHTML = '<div class="empty-state">Nenhum item em andamento no momento.</div>';
-    return;
-  }
-
-  grid.innerHTML = items.map(it => {
-    const pct = it.total > 0 ? Math.min(100, Math.round((it.position / it.total) * 100)) : 0;
-    const isManga = it.type === 'manga';
-    const sub = isManga ? `Página ${Math.round(it.position)} de ${it.total}` : (it.parent ? `${it.parent}` : 'Filme');
-
-    return `
-      <div class="media-card" onclick="resumeMedia('${it.id}', '${it.type}')">
-        <div class="card-cover">
-          <img src="/api/thumb?path=${encodeURIComponent(it.id)}&w=360" loading="lazy" onerror="this.src='/static/thumb-placeholder.png'">
-          <span class="card-badge">${isManga ? 'Mangá' : 'Vídeo'}</span>
-        </div>
-        <div class="card-details">
-          <div class="card-title">${escapeHTML(it.title)}</div>
-          <div class="card-subtitle">${escapeHTML(sub)}</div>
-          <div class="card-progress">
-            <div class="card-progress-bar" style="width: ${pct}%"></div>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function resumeMedia(id, type) {
-  if (type === 'manga') {
-    openChapter(id, 0);
-  } else {
-    openVideo(id);
-  }
-}
-
-// ----------------------------------------------------
-// 2. Cinema & Séries
-// ----------------------------------------------------
-async function loadCinema() {
-  try {
-    const res = await fetch('/api/cinema');
-    state.cinema = await res.json();
-    renderCinema();
-  } catch (err) {
-    console.error('Erro ao carregar cinema:', err);
-  }
-}
-
-function renderCinema(filter = '') {
-  const grid = document.getElementById('cinema-grid');
-  const term = filter.toLowerCase();
-  let items = state.cinema.filter(it => it.title.toLowerCase().includes(term));
-
-  if (state.selectedCinemaCat && state.selectedCinemaCat !== 'all') {
-    items = items.filter(it => it.category === state.selectedCinemaCat);
-  }
-
-  if (items.length === 0) {
-    grid.innerHTML = '<div class="empty-state">Nenhum vídeo encontrado nesta categoria.</div>';
-    return;
-  }
-
-  grid.innerHTML = items.map(it => {
-    const isShow = it.type === 'show';
-    const thumbPath = isShow ? it.episodes[0]?.path : it.movie?.path;
-    const epCount = isShow ? `${it.episodes.length} episódios` : 'Filme';
-
-    let badge = 'Vídeo';
-    if (it.category === 'anime') badge = 'Anime';
-    else if (it.category === 'serie' || isShow) badge = 'Série';
-    else if (it.category === 'filme') badge = 'Filme';
-
-    return `
-      <div class="media-card" onclick="handleCinemaClick('${it.id}')">
-        <div class="card-cover">
-          <img src="/api/thumb?path=${encodeURIComponent(thumbPath)}&w=360" loading="lazy">
-          <span class="card-badge">${badge}</span>
-        </div>
-        <div class="card-details">
-          <div class="card-title">${escapeHTML(it.title)}</div>
-          <div class="card-subtitle">${epCount}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function handleCinemaClick(id) {
-  const item = state.cinema.find(x => x.id === id);
-  if (!item) return;
-
-  if (item.type === 'show') {
-    openEpisodesModal(item);
-  } else if (item.movie) {
-    openVideo(item.movie.id);
-  }
-}
-
-function openEpisodesModal(show) {
-  const modal = document.getElementById('episodes-modal');
-  document.getElementById('episodes-title').textContent = show.title;
-  const list = document.getElementById('episodes-list');
-
-  list.innerHTML = show.episodes.map(ep => `
-    <div class="item-row" onclick="openVideo('${ep.id}')">
-      <div class="item-row-left">
-        <span class="item-row-title">T${ep.season}E${ep.episode} - ${escapeHTML(ep.title)}</span>
-        <span class="item-row-sub">${ep.subtitles?.length ? 'Legendas disponíveis' : 'Sem legendas'}</span>
-      </div>
-      <span style="color: var(--accent);">▶ Assistir</span>
-    </div>
-  `).join('');
-
-  modal.hidden = false;
-  document.getElementById('episodes-close').onclick = () => modal.hidden = true;
-}
-
-// ----------------------------------------------------
-// 3. Player de Vídeo com Progresso
-// ----------------------------------------------------
-function setupVideoPlayer() {
-  const video = document.getElementById('main-video');
-  const modal = document.getElementById('video-modal');
-  const closeBtn = document.getElementById('video-close');
-
-  closeBtn.addEventListener('click', () => closeVideo());
-  window.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !modal.hidden) closeVideo();
-  });
-}
-
-async function openVideo(mediaID) {
-  let media = null;
-  for (const grp of state.cinema) {
-    if (grp.type === 'movie' && grp.movie?.id === mediaID) {
-      media = grp.movie;
-      break;
-    }
-    if (grp.type === 'show') {
-      const found = grp.episodes.find(e => e.id === mediaID);
-      if (found) {
-        media = found;
-        break;
-      }
-    }
-  }
-
-  const modal = document.getElementById('video-modal');
-  const video = document.getElementById('main-video');
-  document.getElementById('video-title').textContent = media ? media.title : 'Reproduzindo';
-
-  // Pausar áudio de música se estiver tocando
-  if (!state.audioEl.paused) {
-    state.audioEl.pause();
-  }
-
-  // Limpar tracks antigas
-  while (video.firstChild) {
-    video.removeChild(video.firstChild);
-  }
-
-  // Adicionar source
-  const src = document.createElement('source');
-  src.src = `/api/cinema/stream?id=${mediaID}`;
-  video.appendChild(src);
-
-  // Adicionar legendas se houver
-  if (media && media.subtitles) {
-    media.subtitles.forEach((sub, idx) => {
-      const tr = document.createElement('track');
-      tr.kind = 'subtitles';
-      tr.label = sub.label;
-      tr.srclang = sub.lang;
-      tr.src = `/api/cinema/sub?path=${encodeURIComponent(sub.path)}`;
-      if (idx === 0) tr.default = true;
-      video.appendChild(tr);
-    });
-  }
-
-  state.currentVideo = mediaID;
-  modal.hidden = false;
-  video.load();
-
-  // Restaurar tempo de progresso
-  const prog = state.overview?.continue?.find(c => c.id === mediaID);
-  if (prog && prog.position > 0) {
-    video.currentTime = prog.position;
-  }
-
-  video.play().catch(() => {});
-
-  // Salvar progresso a cada 5 segundos
-  clearInterval(state.videoProgInterval);
-  state.videoProgInterval = setInterval(() => {
-    if (video.duration > 0 && !video.paused) {
-      saveProgress(mediaID, video.currentTime, video.duration, video.currentTime >= video.duration - 10);
-    }
-  }, 5000);
-}
-
-function closeVideo() {
-  const video = document.getElementById('main-video');
-  const modal = document.getElementById('video-modal');
-
-  if (state.currentVideo && video.duration > 0) {
-    saveProgress(state.currentVideo, video.currentTime, video.duration, video.currentTime >= video.duration - 10);
-  }
-
-  clearInterval(state.videoProgInterval);
-  video.pause();
-  video.src = '';
-  modal.hidden = true;
-  state.currentVideo = null;
-  loadOverview();
-}
-
-async function saveProgress(mediaID, position, total, completed) {
-  try {
-    await fetch('/api/progress', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        media_id: mediaID,
-        position: position,
-        total: total,
-        completed: completed
-      })
-    });
-  } catch (err) {
-    console.error('Erro ao salvar progresso:', err);
-  }
-}
-
-// ----------------------------------------------------
-// 4. Mangás & Quadrinhos
-// ----------------------------------------------------
-async function loadManga() {
-  try {
-    const res = await fetch('/api/manga');
-    state.manga = await res.json();
-    renderManga();
-  } catch (err) {
-    console.error('Erro ao carregar manga:', err);
-  }
-}
-
-function renderManga(filter = '') {
-  const grid = document.getElementById('manga-grid');
-  const term = filter.toLowerCase();
-  const items = state.manga.filter(it => it.title.toLowerCase().includes(term));
-
-  if (items.length === 0) {
-    grid.innerHTML = '<div class="empty-state">Nenhum mangá encontrado.</div>';
-    return;
-  }
-
-  grid.innerHTML = items.map(m => `
-    <div class="media-card" onclick="openChaptersModal('${m.id}')">
-      <div class="card-cover">
-        <img src="${m.coverURL}" loading="lazy">
-        <span class="card-badge">${m.chapters.length} caps</span>
-      </div>
-      <div class="card-details">
-        <div class="card-title">${escapeHTML(m.title)}</div>
-        <div class="card-subtitle">${m.chapters.length} capítulos</div>
-      </div>
-    </div>
-  `).join('');
-}
-
-function openChaptersModal(mangaID) {
-  const manga = state.manga.find(m => m.id === mangaID);
-  if (!manga) return;
-
-  const modal = document.getElementById('chapters-modal');
-  document.getElementById('chapters-title').textContent = manga.title;
-  const list = document.getElementById('chapters-list');
-
-  list.innerHTML = manga.chapters.map(ch => `
-    <div class="item-row" onclick="openChapter('${ch.id}', 0)">
-      <div class="item-row-left">
-        <span class="item-row-title">${escapeHTML(ch.title)}</span>
-        <span class="item-row-sub">${ch.page_count} páginas</span>
-      </div>
-      <span style="color: var(--accent);">📖 Ler</span>
-    </div>
-  `).join('');
-
-  modal.hidden = false;
-  document.getElementById('chapters-close').onclick = () => modal.hidden = true;
-}
-
-function setupMangaReader() {
-  const readerModal = document.getElementById('reader-modal');
-  const modeSelect = document.getElementById('reader-mode');
-  const closeBtn = document.getElementById('reader-close');
-  const prevBtn = document.getElementById('reader-prev-btn');
-  const nextBtn = document.getElementById('reader-next-btn');
-
-  closeBtn.onclick = () => {
-    readerModal.hidden = true;
-    loadOverview();
-  };
-
-  modeSelect.onchange = e => {
-    state.mangaMode = e.target.value;
-    if (state.currentMangaCh) renderMangaPages();
-  };
-
-  prevBtn.onclick = () => {
-    if (state.currentMangaPage > 0) {
-      state.currentMangaPage--;
-      renderMangaPages();
-    }
-  };
-
-  nextBtn.onclick = () => {
-    if (state.currentMangaCh && state.currentMangaPage < state.currentMangaCh.page_count - 1) {
-      state.currentMangaPage++;
-      renderMangaPages();
-    }
-  };
-
-  window.addEventListener('keydown', e => {
-    if (readerModal.hidden) return;
-    if (e.key === 'ArrowRight' || e.key === 'd') nextBtn.click();
-    if (e.key === 'ArrowLeft' || e.key === 'a') prevBtn.click();
-    if (e.key === 'Escape') closeBtn.click();
-  });
-}
-
-function openChapter(chID, startPage = 0) {
-  document.getElementById('chapters-modal').hidden = true;
-
-  let ch = null;
-  for (const m of state.manga) {
-    ch = m.chapters.find(c => c.id === chID);
-    if (ch) break;
-  }
-  if (!ch) return;
-
-  state.currentMangaCh = ch;
-  state.currentMangaPage = startPage;
-  document.getElementById('reader-chapter-title').textContent = ch.title;
-  document.getElementById('reader-modal').hidden = false;
-
-  renderMangaPages();
-}
-
-function renderMangaPages() {
-  const canvas = document.getElementById('reader-canvas');
-  const pag = document.getElementById('reader-pagination');
-  const ind = document.getElementById('reader-page-indicator');
-  const ch = state.currentMangaCh;
-
-  canvas.innerHTML = '';
-
-  if (state.mangaMode === 'webtoon') {
-    canvas.classList.remove('single-mode');
-    pag.hidden = true;
-
-    for (let i = 0; i < ch.page_count; i++) {
-      const img = document.createElement('img');
-      img.src = `/api/manga/page?ch=${ch.id}&p=${i}`;
-      img.loading = i > 3 ? 'lazy' : 'eager';
-      canvas.appendChild(img);
-    }
-    saveProgress(ch.id, 1, ch.page_count, false);
-  } else {
-    canvas.classList.add('single-mode');
-    pag.hidden = false;
-    ind.textContent = `${state.currentMangaPage + 1} / ${ch.page_count}`;
-
-    const img = document.createElement('img');
-    img.src = `/api/manga/page?ch=${ch.id}&p=${state.currentMangaPage}`;
-    canvas.appendChild(img);
-
-    saveProgress(ch.id, state.currentMangaPage + 1, ch.page_count, state.currentMangaPage >= ch.page_count - 1);
-  }
-}
-
-// ----------------------------------------------------
-// 5. Músicas & Sticky Player
-// ----------------------------------------------------
-async function loadMusic() {
-  try {
-    const res = await fetch('/api/music');
-    state.music = await res.json();
-    renderMusic();
-  } catch (err) {
-    console.error('Erro ao carregar músicas:', err);
-  }
-}
-
-function renderMusic(filter = '') {
-  const grid = document.getElementById('music-grid');
-  const term = filter.toLowerCase();
-  const items = state.music.filter(m => m.album.toLowerCase().includes(term) || m.artist.toLowerCase().includes(term));
-
-  if (items.length === 0) {
-    grid.innerHTML = '<div class="empty-state">Nenhum álbum ou faixa encontrada.</div>';
-    return;
-  }
-
-  grid.innerHTML = items.map((alb, idx) => `
-    <div class="media-card" onclick="openAlbumModal(${idx})">
-      <div class="card-cover square">
-        <img src="/api/music/cover?id=${alb.cover_id}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" loading="lazy">
-        <div style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:2.5rem;">🎵</div>
-      </div>
-      <div class="card-details">
-        <div class="card-title">${escapeHTML(alb.album)}</div>
-        <div class="card-subtitle">${escapeHTML(alb.artist)} &bull; ${alb.tracks.length} faixas</div>
-      </div>
-    </div>
-  `).join('');
-}
-
-function openAlbumModal(albIdx) {
-  const alb = state.music[albIdx];
-  if (!alb) return;
-
-  const modal = document.getElementById('album-modal');
-  document.getElementById('album-title').textContent = `${alb.artist} - ${alb.album}`;
-  const list = document.getElementById('album-tracks-list');
-
-  list.innerHTML = alb.tracks.map((t, tIdx) => `
-    <div class="item-row" onclick="playAlbumTrack(${albIdx}, ${tIdx})">
-      <div class="item-row-left">
-        <span class="item-row-title">${t.track_number ? t.track_number + '. ' : ''}${escapeHTML(t.title)}</span>
-        <span class="item-row-sub">${escapeHTML(t.artist)}</span>
-      </div>
-      <span style="color: var(--accent);">▶ Tocar</span>
-    </div>
-  `).join('');
-
-  modal.hidden = false;
-  document.getElementById('album-close').onclick = () => modal.hidden = true;
-}
-
-function setupAudioPlayer() {
-  const audio = state.audioEl;
-  const playBtn = document.getElementById('player-play');
-  const prevBtn = document.getElementById('player-prev');
-  const nextBtn = document.getElementById('player-next');
-  const seek = document.getElementById('player-seek');
-  const closeBtn = document.getElementById('player-close');
-
-  playBtn.onclick = () => {
-    if (audio.paused) audio.play();
-    else audio.pause();
-  };
-
-  audio.onplay = () => playBtn.textContent = '⏸';
-  audio.onpause = () => playBtn.textContent = '▶';
-
-  prevBtn.onclick = () => {
-    if (state.currentTrackIdx > 0) {
-      playTrack(state.currentTrackIdx - 1);
-    }
-  };
-
-  nextBtn.onclick = () => {
-    if (state.currentTrackIdx < state.playlist.length - 1) {
-      playTrack(state.currentTrackIdx + 1);
-    }
-  };
-
-  audio.onended = () => nextBtn.click();
-
-  audio.ontimeupdate = () => {
-    if (audio.duration) {
-      const cur = formatTime(audio.currentTime);
-      const tot = formatTime(audio.duration);
-      document.getElementById('player-time-cur').textContent = cur;
-      document.getElementById('player-time-tot').textContent = tot;
-      seek.value = (audio.currentTime / audio.duration) * 100;
-    }
-  };
-
-  seek.oninput = () => {
-    if (audio.duration) {
-      audio.currentTime = (seek.value / 100) * audio.duration;
-    }
-  };
-
-  closeBtn.onclick = () => {
-    audio.pause();
-    document.getElementById('sticky-player').hidden = true;
-  };
-}
-
-function playAlbumTrack(albIdx, trackIdx) {
-  document.getElementById('album-modal').hidden = true;
-  const alb = state.music[albIdx];
-  state.playlist = alb.tracks;
-  playTrack(trackIdx);
-}
-
-function playTrack(idx) {
-  state.currentTrackIdx = idx;
-  const t = state.playlist[idx];
-  if (!t) return;
-
-  const player = document.getElementById('sticky-player');
-  player.hidden = false;
-
-  document.getElementById('player-title').textContent = t.title;
-  document.getElementById('player-artist').textContent = `${t.artist} &bull; ${t.album}`;
-
-  const thumbBox = document.getElementById('player-thumb');
-  thumbBox.innerHTML = `<img src="/api/music/cover?id=${t.id}" onerror="this.parentElement.innerHTML='🎵'">`;
-
-  state.audioEl.src = `/api/music/stream?id=${t.id}`;
-  state.audioEl.load();
-  state.audioEl.play().catch(() => {});
-}
-
-// ----------------------------------------------------
-// Helpers
-// ----------------------------------------------------
-function formatTime(secs) {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
-}
-
-function escapeHTML(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+function navigatePage(dir){const ch=state.currentMangaCh;if(!ch)return;if(dir>0&&state.currentMangaPage+state.readerSpan<ch.page_count){state.readerHistory.push(state.currentMangaPage);state.currentMangaPage+=state.readerSpan;resetReaderZoom();renderPages()}else if(dir<0){const prev=state.readerHistory.pop();if(prev!==undefined){state.currentMangaPage=prev;resetReaderZoom();renderPages()}}}
+function openChapter(id,page=0){let ch;for(const m of state.manga){ch=m.chapters.find(x=>x.id===id);if(ch)break}if(!ch)return;closeDetail();state.currentMangaCh=ch;state.currentMangaPage=page;state.readerHistory=[];state.readerZoom={scale:1,x:0,y:0};$('#reader-chapter-title').textContent=ch.title;$('#reader-modal').hidden=false;renderPages()}
+function page(ch,n){const i=new Image();i.loading='lazy';i.decoding='async';i.src=`/api/manga/page?ch=${encodeURIComponent(ch.id)}&p=${n}`;i.alt=`Página ${n+1}`;return i}
+function loadPage(ch,n){return new Promise(resolve=>{const i=page(ch,n);i.onload=()=>resolve(i);i.onerror=()=>resolve(i)})}
+async function renderPages(){const c=$('#reader-canvas'),ch=state.currentMangaCh;if(!ch)return;c.replaceChildren();const first=await loadPage(ch,state.currentMangaPage);if(ch!==state.currentMangaCh)return;const isSpread=first.naturalWidth>first.naturalHeight*1.12;const isLastPage=state.currentMangaPage+1>=ch.page_count;state.readerSpan=(isSpread||isLastPage)?1:2;c.className='reader-canvas';if(state.readerSpan===2)c.classList.add('double-page');c.appendChild(first);if(state.readerSpan===2){const second=await loadPage(ch,state.currentMangaPage+1);c.appendChild(second)}const last=state.currentMangaPage+state.readerSpan;$('#reader-page-indicator').textContent=state.readerSpan===2?`${state.currentMangaPage+1}–${last} / ${ch.page_count}`:`${state.currentMangaPage+1} / ${ch.page_count}`;save(ch.id,last,ch.page_count,last>=ch.page_count)}
+function toggleImmersive(){state.readerImmersive=!state.readerImmersive;$('#reader-modal').classList.toggle('immersive',state.readerImmersive)}
+function resetReaderZoom(){state.readerZoom={scale:1,x:0,y:0};applyReaderZoom()}
+function zoomReaderAt(px,py,scale){state.readerZoom.scale=scale;applyReaderZoom()}
+function applyReaderZoom(){const img=$('#reader-canvas img');if(!img)return;img.style.transform=`translate(${state.readerZoom.x}px,${state.readerZoom.y}px) scale(${state.readerZoom.scale})`;img.classList.toggle('zoomed',state.readerZoom.scale>1)}
+function closeReader(){$('#reader-modal').hidden=true;loadOverview()}
+function setupAudio(){const a=state.audioEl;$('#player-play').onclick=()=>a.paused?a.play():a.pause();$('#player-prev').onclick=()=>playTrack(state.currentTrackIdx-1);$('#player-next').onclick=()=>playTrack(nextTrack());$('#player-shuffle').onclick=()=>{state.shuffle=!state.shuffle;$('#player-shuffle').classList.toggle('active',state.shuffle)};$('#player-repeat').onclick=()=>{state.repeat=state.repeat==='all'?'one':state.repeat==='one'?'off':'all';$('#player-repeat').textContent=state.repeat==='one'?'↻¹':'↻';$('#player-repeat').classList.toggle('active',state.repeat!=='off')};$('#player-close').onclick=()=>{a.pause();a.removeAttribute('src');$('#sticky-player').hidden=true};$('#player-seek').oninput=e=>{if(a.duration)a.currentTime=a.duration*e.target.value/100};a.ontimeupdate=()=>{$('#player-seek').value=a.duration?a.currentTime/a.duration*100:0;$('#player-time-cur').textContent=time(a.currentTime);$('#player-time-tot').textContent=time(a.duration);if(!state.fading&&a.duration-a.currentTime<2&&a.duration>3&&state.repeat!=='one'){state.fading=true;fadeTo(0,700,()=>playTrack(nextTrack(),true))}};a.onplay=()=>$('#player-play').textContent='⏸';a.onpause=()=>$('#player-play').textContent='▶';a.onended=()=>{if(!state.fading&&state.repeat!=='off')playTrack(nextTrack());state.fading=false}}
+function allTracks(){return state.music.flatMap(x=>x.tracks)}function playAlbum(a,i){state.playlist=allTracks();const at=a.tracks[i];playTrack(state.playlist.findIndex(x=>x.id===at.id))}function nextTrack(){if(!state.playlist.length)return 0;if(state.repeat==='one')return state.currentTrackIdx;if(state.shuffle)return Math.floor(Math.random()*state.playlist.length);const n=state.currentTrackIdx+1;return n<state.playlist.length?n:(state.repeat==='all'?0:state.currentTrackIdx)}function fadeTo(target,ms,done){const a=state.audioEl,start=a.volume,steps=12;let n=0;const timer=setInterval(()=>{n++;a.volume=start+(target-start)*n/steps;if(n>=steps){clearInterval(timer);done?.()}},ms/steps)}function playTrack(i,crossfade=false){if(!state.playlist.length)return;state.currentTrackIdx=(i+state.playlist.length)%state.playlist.length;const t=state.playlist[state.currentTrackIdx],a=state.audioEl;$('#sticky-player').hidden=false;$('#player-title').textContent=t.title;$('#player-artist').textContent=t.artist;$('#player-thumb').innerHTML=`<img alt="" src="/api/music/cover?id=${encodeURIComponent(t.id)}">`;a.src=`/api/music/stream?id=${encodeURIComponent(t.id)}`;a.volume=0;a.play().then(()=>fadeTo(1,450)).catch(()=>{});state.fading=false}function time(n){return Number.isFinite(n)?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`:'0:00'}

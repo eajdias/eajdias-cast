@@ -25,10 +25,10 @@ type Track struct {
 }
 
 type AlbumGroup struct {
-	Album  string  `json:"album"`
-	Artist string  `json:"artist"`
-	CoverID string `json:"cover_id"`
-	Tracks []Track `json:"tracks"`
+	Album   string  `json:"album"`
+	Artist  string  `json:"artist"`
+	CoverID string  `json:"cover_id"`
+	Tracks  []Track `json:"tracks"`
 }
 
 func isAudioFile(name string) bool {
@@ -97,7 +97,7 @@ func scanMusic(dir string) ([]AlbumGroup, map[string]Track) {
 			}
 			albumsMap[key] = group
 		}
-		if t.HasCover && group.CoverID == "" {
+		if t.HasCover {
 			group.CoverID = t.ID
 		}
 		group.Tracks = append(group.Tracks, t)

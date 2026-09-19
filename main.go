@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -18,24 +19,26 @@ import (
 var staticFS embed.FS
 
 type server struct {
-	mediaDir    string
-	cinemaDirs  []string
-	mangaDir    string
-	musicDir    string
-	cacheDir    string
-	password    string
-	secret      []byte
-	db          *dbStore
+	mediaDir   string
+	cinemaDirs []string
+	mangaDir   string
+	musicDir   string
+	cacheDir   string
+	password   string
+	secret     []byte
+	db         *dbStore
 
-	mu          sync.RWMutex
-	lastScan    time.Time
-	cinemaItems []VideoGroup
-	cinemaMap   map[string]VideoMedia
-	mangaItems  []MangaSeries
-	mangaChMap  map[string]MangaChapter
-	mangaCoverMap map[string]string
-	musicAlbums []AlbumGroup
-	musicMap    map[string]Track
+	mu                sync.RWMutex
+	lastScan          time.Time
+	cinemaItems       []VideoGroup
+	cinemaMap         map[string]VideoMedia
+	mangaItems        []MangaSeries
+	mangaChMap        map[string]MangaChapter
+	mangaCoverMap     map[string]string
+	mangaChapterCover map[string]string
+	subtitleMap       map[string]subtitleRef
+	musicAlbums       []AlbumGroup
+	musicMap          map[string]Track
 
 	sem      chan struct{}
 	tmu      sync.Mutex
@@ -80,9 +83,17 @@ func (s *server) rescanIfNeeded() {
 	musicList, trackMap := scanMusic(s.musicDir)
 
 	mangaCh := make(map[string]MangaChapter)
+	mangaChapterCover := make(map[string]string)
+	subtitles := make(map[string]subtitleRef)
+	for _, video := range cinemaMedia {
+		for _, sub := range video.Subtitles {
+			subtitles[sub.ID] = subtitleRef{Path: sub.Path, StreamIndex: sub.StreamIndex}
+		}
+	}
 	for _, m := range mangaList {
 		for _, ch := range m.Chapters {
 			mangaCh[ch.ID] = ch
+			mangaChapterCover[ch.ID] = m.CoverURL
 		}
 	}
 
@@ -91,6 +102,8 @@ func (s *server) rescanIfNeeded() {
 	s.mangaItems = mangaList
 	s.mangaChMap = mangaCh
 	s.mangaCoverMap = mangaCovers
+	s.mangaChapterCover = mangaChapterCover
+	s.subtitleMap = subtitles
 	s.musicAlbums = musicList
 	s.musicMap = trackMap
 	s.lastScan = time.Now()
@@ -172,17 +185,19 @@ func main() {
 	secret := getOrInitSecret(filepath.Join(cacheDir, ".secret"))
 
 	srv := &server{
-		mediaDir:      mediaDir,
-		cinemaDirs:    cinemaDirs,
-		mangaDir:      mangaDir,
-		musicDir:      musicDir,
-		cacheDir:      cacheDir,
-		password:      password,
-		secret:        secret,
-		db:            db,
-		mangaCoverMap: make(map[string]string),
-		sem:           make(chan struct{}, 2),
-		inflight:      make(map[string]*thumbCall),
+		mediaDir:          mediaDir,
+		cinemaDirs:        cinemaDirs,
+		mangaDir:          mangaDir,
+		musicDir:          musicDir,
+		cacheDir:          cacheDir,
+		password:          password,
+		secret:            secret,
+		db:                db,
+		mangaCoverMap:     make(map[string]string),
+		mangaChapterCover: make(map[string]string),
+		subtitleMap:       make(map[string]subtitleRef),
+		sem:               make(chan struct{}, 2),
+		inflight:          make(map[string]*thumbCall),
 	}
 
 	// Pré-indexar mídias no startup em background
@@ -232,10 +247,15 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index.html não encontrado", http.StatusInternalServerError)
 		return
 	}
+	assetHash := hashString(string(mustStatic("static/app.js")) + string(mustStatic("static/style.css")))
+	data = bytes.ReplaceAll(data, []byte("/static/style.css"), []byte("/static/style.css?v="+assetHash))
+	data = bytes.ReplaceAll(data, []byte("/static/app.js"), []byte("/static/app.js?v="+assetHash))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(data)
 }
+
+func mustStatic(name string) []byte { b, _ := staticFS.ReadFile(name); return b }
 
 func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	file := r.PathValue("file")
@@ -270,6 +290,7 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		Position  float64 `json:"position"`
 		Total     float64 `json:"total"`
 		UpdatedAt int64   `json:"updated_at"`
+		CoverURL  string  `json:"cover_url,omitempty"`
 	}
 
 	var continueList []ContinueItem
@@ -298,6 +319,13 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	for i := range continueList {
+		if v, ok := s.cinemaMap[continueList[i].ID]; ok {
+			continueList[i].CoverURL = "/api/thumb?id=" + v.ID
+		} else if cover := s.mangaChapterCover[continueList[i].ID]; cover != "" {
+			continueList[i].CoverURL = cover
+		}
+	}
 
 	resp := map[string]any{
 		"counts": map[string]int{
@@ -315,7 +343,11 @@ func (s *server) handleCinemaList(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	writeJSON(w, http.StatusOK, s.cinemaItems)
+	items := append([]VideoGroup(nil), s.cinemaItems...)
+	for i := range items {
+		items[i].CoverURL = "/api/thumb?id=" + items[i].ID
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *server) handleCinemaStream(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +358,10 @@ func (s *server) handleCinemaStream(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if audio, err := strconv.Atoi(r.URL.Query().Get("audio")); err == nil && audio >= 0 && audio < len(v.AudioTracks) {
+		s.serveSelectedAudio(w, r, v.Path, audio)
 		return
 	}
 
@@ -344,12 +380,19 @@ func (s *server) handleCinemaStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCinemaSub(w http.ResponseWriter, r *http.Request) {
 	s.rescanIfNeeded()
-	subPath := r.URL.Query().Get("path")
-	if subPath == "" {
+	subID := r.URL.Query().Get("id")
+	s.mu.RLock()
+	sub := s.subtitleMap[subID]
+	s.mu.RUnlock()
+	if sub.Path == "" && sub.StreamIndex == 0 {
 		http.NotFound(w, r)
 		return
 	}
-	serveSubtitle(w, r, subPath)
+	if sub.Path != "" {
+		serveSubtitle(w, r, sub.Path)
+		return
+	}
+	serveEmbeddedSubtitle(w, r, sub)
 }
 
 func (s *server) handleMangaList(w http.ResponseWriter, r *http.Request) {
@@ -464,4 +507,3 @@ func (s *server) handleMangaCover(w http.ResponseWriter, r *http.Request) {
 	}
 	s.serveMangaCover(w, r, coverPath)
 }
-

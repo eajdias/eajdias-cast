@@ -65,7 +65,27 @@ func isImageFile(name string) bool {
 	return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp" || ext == ".gif" || ext == ".avif"
 }
 
-func findMangaCover(baseDir, title string) string {
+func normalizeMediaName(name string) string {
+	name = strings.ToLower(strings.NewReplacer(
+		"á", "a", "à", "a", "ã", "a", "â", "a", "ä", "a",
+		"é", "e", "è", "e", "ê", "e", "ë", "e",
+		"í", "i", "ì", "i", "î", "i", "ï", "i",
+		"ó", "o", "ò", "o", "õ", "o", "ô", "o", "ö", "o",
+		"ú", "u", "ù", "u", "û", "u", "ü", "u", "ç", "c",
+	).Replace(name))
+	var b strings.Builder
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func findMangaCover(baseDir, title string, indexed map[string]string) string {
+	if c := indexed[normalizeMediaName(title)]; c != "" {
+		return c
+	}
 	candidates := []string{
 		filepath.Join(baseDir, "thumbnails", title+".jpg"),
 		filepath.Join(baseDir, "thumbnails", title+".png"),
@@ -82,6 +102,26 @@ func findMangaCover(baseDir, title string) string {
 	return ""
 }
 
+func indexMangaCovers(baseDir string) map[string]string {
+	result := make(map[string]string)
+	for _, folder := range []string{"thumbnails", "covers"} {
+		entries, err := os.ReadDir(filepath.Join(baseDir, folder))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !isImageFile(e.Name()) {
+				continue
+			}
+			key := normalizeMediaName(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())))
+			if key != "" {
+				result[key] = filepath.Join(baseDir, folder, e.Name())
+			}
+		}
+	}
+	return result
+}
+
 func scanManga(dir string) ([]MangaSeries, map[string]string) {
 	var series []MangaSeries
 	covers := make(map[string]string)
@@ -89,6 +129,7 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 	if err != nil {
 		return series, covers
 	}
+	coverIndex := indexMangaCovers(dir)
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -160,7 +201,7 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 				manga.Chapters = chapters
 
 				// Verificar se tem capa própria (ex: manga/thumbnails/{Nome}.jpg)
-				if cov := findMangaCover(dir, name); cov != "" {
+				if cov := findMangaCover(dir, name, coverIndex); cov != "" {
 					covers[mangaID] = cov
 					manga.CoverURL = fmt.Sprintf("/api/manga/cover?id=%s", mangaID)
 				} else {
@@ -188,7 +229,7 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 					Chapters: []MangaChapter{ch},
 				}
 
-				if cov := findMangaCover(dir, cleanTitle); cov != "" {
+				if cov := findMangaCover(dir, cleanTitle, coverIndex); cov != "" {
 					covers[mangaID] = cov
 					manga.CoverURL = fmt.Sprintf("/api/manga/cover?id=%s", mangaID)
 				} else {
@@ -306,4 +347,3 @@ func (s *server) serveMangaCover(w http.ResponseWriter, r *http.Request, coverPa
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeFile(w, r, coverPath)
 }
-

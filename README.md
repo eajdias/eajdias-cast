@@ -20,12 +20,11 @@
 
 ```
 /seus-dados/
-├── cinema/
-│   ├── Filmes/
+├── filmes/
 │   │   └── Matrix (1999)/
 │   │       ├── Matrix.mp4
 │   │       └── Matrix.srt       # Legenda opcional
-│   └── Series/
+├── series/
 │       └── Breaking Bad/
 │           ├── Temporada 01/
 │           │   ├── S01E01.mkv
@@ -40,7 +39,7 @@
 │       └── Capitulo 01/          # Ou pastas de imagens
 │           ├── 01.jpg
 │           └── 02.jpg
-├── music/
+├── musica/
 │   └── Daft Punk/
 │       └── Discovery/
 │           ├── 01 - One More Time.mp3
@@ -78,7 +77,8 @@ Acesse no navegador:
 | :--- | :--- | :--- |
 | `PORT` | `8080` (interno) / `8095` (compose) | Porta do servidor HTTP |
 | `PASSWORD` | `cast123` | Senha de login para o painel web |
-| `CINEMA_DIR` | `/data/cinema` | Diretório montado com filmes e séries |
-| `MANGA_DIR` | `/data/manga` | Diretório montado com mangás e CBZs |
-| `MUSIC_DIR` | `/data/music` | Diretório montado com músicas |
+| `MEDIA_DIR` | `/data/media` | Volume único; detecta `filmes`, `series`, `anime`, `videos`, `manga` e `musica` |
+| `CINEMA_DIR` | — | Sobrescreve a descoberta automática de vídeo, se necessário |
+| `MANGA_DIR` | — | Sobrescreve o diretório detectado de mangás |
+| `MUSIC_DIR` | — | Sobrescreve o diretório detectado de músicas |
 | `CACHE_DIR` | `/data/cache` | Onde ficam o SQLite (`cast.db`) e miniaturas |
