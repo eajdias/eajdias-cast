@@ -311,6 +311,8 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/manifest+json")
 	} else if filepath.Ext(file) == ".svg" {
 		w.Header().Set("Content-Type", "image/svg+xml")
+	} else if filepath.Ext(file) == ".woff2" {
+		w.Header().Set("Content-Type", "font/woff2")
 	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Write(data)
