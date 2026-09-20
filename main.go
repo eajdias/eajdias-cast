@@ -43,6 +43,9 @@ type server struct {
 	sem      chan struct{}
 	tmu      sync.Mutex
 	inflight map[string]*thumbCall
+	// remux de faixa de áudio em andamento (mesmo padrão dos thumbs)
+	amu           sync.Mutex
+	audioInflight map[string]chan struct{}
 }
 
 func hashString(s string) string {
@@ -74,9 +77,9 @@ func (s *server) rescanIfNeeded() {
 	// I/O pesado (ffprobe por arquivo, zips, tags ID3) fora do lock de
 	// escrita: antes o Lock() envolvia o scan inteiro e travava todas
 	// as APIs e thumbs. cinemaDirs/mangaDir/musicDir são fixos no startup.
-	cinemaGroups, cinemaMedia := scanCinema(s.cinemaDirs...)
-	mangaList, mangaCovers := scanManga(s.mangaDir)
-	musicList, trackMap := scanMusic(s.musicDir)
+	cinemaGroups, cinemaMedia := scanCinema(s.db, s.cinemaDirs...)
+	mangaList, mangaCovers := scanManga(s.db, s.mangaDir)
+	musicList, trackMap := scanMusic(s.db, s.musicDir)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,6 +206,7 @@ func main() {
 
 	_ = os.MkdirAll(cacheDir, 0755)
 	_ = os.MkdirAll(filepath.Join(cacheDir, "thumbs"), 0755)
+	cleanupAudioCache(cacheDir, audioCacheMaxBytes)
 
 	db := initDB(cacheDir)
 	secret := getOrInitSecret(filepath.Join(cacheDir, ".secret"))
@@ -221,10 +225,13 @@ func main() {
 		subtitleMap:       make(map[string]subtitleRef),
 		sem:               make(chan struct{}, 2),
 		inflight:          make(map[string]*thumbCall),
+		audioInflight:     make(map[string]chan struct{}),
 	}
 
 	// Pré-indexar mídias no startup em background
 	go srv.rescanIfNeeded()
+	// Aquecer thumbs ausentes em background (áudio continua sob demanda)
+	go srv.warmThumbs()
 
 	mux := http.NewServeMux()
 
@@ -246,14 +253,15 @@ func main() {
 	mux.HandleFunc("GET /api/tags", srv.requireAuth(srv.handleTagsList))
 	mux.HandleFunc("POST /api/tags", srv.requireAuth(srv.handleTagsAdd))
 	mux.HandleFunc("DELETE /api/tags", srv.requireAuth(srv.handleTagsDelete))
-	mux.HandleFunc("POST /api/favorite", srv.requireAuth(srv.handleFavorite))
 	mux.HandleFunc("GET /api/thumb", srv.requireAuth(srv.handleThumb))
 
 	// API Cinema
 	mux.HandleFunc("GET /api/cinema", srv.requireAuth(srv.handleCinemaList))
 	mux.HandleFunc("GET /api/cinema/stream", srv.requireAuth(srv.handleCinemaStream))
 	mux.HandleFunc("GET /api/cinema/sub", srv.requireAuth(srv.handleCinemaSub))
-
+	mux.HandleFunc("GET /api/audio-progress", srv.requireAuth(srv.handleAudioProgress))
+	mux.HandleFunc("GET /api/cache", srv.requireAuth(srv.handleCacheInfo))
+	mux.HandleFunc("POST /api/cache/clear", srv.requireAuth(srv.handleCacheClear))
 	// API Manga
 	mux.HandleFunc("GET /api/manga", srv.requireAuth(srv.handleMangaList))
 	mux.HandleFunc("GET /api/manga/cover", srv.requireAuth(srv.handleMangaCover))
@@ -297,6 +305,12 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	} else if filepath.Ext(file) == ".js" {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	} else if filepath.Ext(file) == ".png" {
+		w.Header().Set("Content-Type", "image/png")
+	} else if filepath.Ext(file) == ".json" {
+		w.Header().Set("Content-Type", "application/manifest+json")
+	} else if filepath.Ext(file) == ".svg" {
+		w.Header().Set("Content-Type", "image/svg+xml")
 	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Write(data)
@@ -308,7 +322,6 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.RUnlock()
 
 	allProgress := s.db.GetAllProgress()
-	allFavs := s.db.GetAllFavorites()
 
 	// Coletar itens com progresso ("Continuar Assistindo" / "Continuar Lendo")
 	type ContinueItem struct {
@@ -362,8 +375,7 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			"manga":  len(s.mangaItems),
 			"music":  len(s.musicMap),
 		},
-		"continue":  continueList,
-		"favorites": allFavs,
+		"continue": continueList,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -389,8 +401,8 @@ func (s *server) handleCinemaStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if audio, err := strconv.Atoi(r.URL.Query().Get("audio")); err == nil && audio >= 0 && audio < len(v.AudioTracks) {
-		s.serveSelectedAudio(w, r, v.Path, audio)
+	if audio, err := strconv.Atoi(r.URL.Query().Get("audio")); err == nil {
+		s.serveSelectedAudio(w, r, v, audio)
 		return
 	}
 
@@ -422,6 +434,41 @@ func (s *server) handleCinemaSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveEmbeddedSubtitle(w, r, sub)
+}
+
+func (s *server) handleAudioProgress(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	s.rescanIfNeeded()
+	s.mu.RLock()
+	v, ok := s.cinemaMap[q.Get("id")]
+	s.mu.RUnlock()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	audio, _ := strconv.Atoi(q.Get("audio"))
+	dst := s.audioCachePath(v, audio)
+	if fi, err := os.Stat(dst); err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"progress": 100, "size": fi.Size()})
+		return
+	}
+	s.amu.Lock()
+	_, active := s.audioInflight[dst]
+	s.amu.Unlock()
+	if !active {
+		writeJSON(w, http.StatusOK, map[string]any{"progress": nil})
+		return
+	}
+	pct := 0
+	if fi, err := os.Stat(dst + ".tmp"); err == nil {
+		if si, err := os.Stat(v.Path); err == nil && si.Size() > 0 {
+			pct = int(fi.Size() * 100 / si.Size())
+			if pct > 99 {
+				pct = 99
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"progress": pct})
 }
 
 func (s *server) handleMangaList(w http.ResponseWriter, r *http.Request) {
@@ -530,16 +577,57 @@ func (s *server) handleProgressDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *server) handleFavorite(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		MediaID string `json:"media_id"`
+type cacheInfo struct {
+	Files int64 `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+func dirUsage(dir string) cacheInfo {
+	var ci cacheInfo
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ci
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.MediaID == "" {
-		http.Error(w, "media_id obrigatório", http.StatusBadRequest)
-		return
+	for _, e := range entries {
+		if fi, err := e.Info(); err == nil && !fi.IsDir() {
+			ci.Files++
+			ci.Bytes += fi.Size()
+		}
 	}
-	fav := s.db.ToggleFavorite(body.MediaID)
-	writeJSON(w, http.StatusOK, map[string]bool{"fav": fav})
+	return ci
+}
+
+func (s *server) handleCacheInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"thumbs": dirUsage(filepath.Join(s.cacheDir, "thumbs")),
+		"audio":  dirUsage(filepath.Join(s.cacheDir, "audio")),
+	})
+}
+
+func (s *server) handleCacheClear(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "all"
+	}
+	cleared := 0
+	for _, name := range []string{"audio", "thumbs"} {
+		if target != "all" && target != name {
+			continue
+		}
+		dir := filepath.Join(s.cacheDir, name)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if fi, err := e.Info(); err == nil && !fi.IsDir() {
+				if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
+					cleared++
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared})
 }
 
 func (s *server) handleMangaCover(w http.ResponseWriter, r *http.Request) {

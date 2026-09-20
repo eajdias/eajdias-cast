@@ -39,6 +39,63 @@ func thumbFingerprint(path string) string {
 	return "|" + strconv.FormatInt(fi.ModTime().Unix(), 10) + "|" + strconv.FormatInt(fi.Size(), 10)
 }
 
+// warmWidths cobre o que o frontend pede (thumbW: 480 desktop, 720 DPR alto).
+var warmWidths = []int{480, 720}
+
+type thumbJob struct{ id, path string }
+
+// warmThumbs gera em background no boot os thumbs ainda ausentes, para a
+// grade abrir pronta. Remux de áudio fica sob demanda de propósito: cada
+// faixa custa ~o tamanho do filme em disco.
+// Roda com s.sem (2 slots), então nunca degrada thumbs sob demanda.
+func (s *server) warmThumbs() {
+	s.rescanIfNeeded()
+	for _, w := range warmWidths {
+		n := s.generateThumbs(w)
+		log.Printf("[warm] %d thumbs w=%d", n, w)
+	}
+}
+
+func (s *server) generateThumbs(width int) int {
+	s.mu.RLock()
+	var jobs []thumbJob
+	for id, v := range s.cinemaMap {
+		jobs = append(jobs, thumbJob{id, v.Path})
+	}
+	for _, g := range s.cinemaItems {
+		p := g.coverPath
+		if p == "" {
+			if len(g.Episodes) > 0 {
+				p = g.Episodes[0].Path
+			} else if g.Movie != nil {
+				p = g.Movie.Path
+			}
+		}
+		if p != "" {
+			jobs = append(jobs, thumbJob{g.ID, p})
+		}
+	}
+	s.mu.RUnlock()
+
+	warmed := 0
+	for _, j := range jobs {
+		key := thumbKey("v4:"+j.id+thumbFingerprint(j.path), width)
+		dst := filepath.Join(s.cacheDir, "thumbs", key)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		s.sem <- struct{}{}
+		err := s.buildThumb(j.path, dst, width)
+		<-s.sem
+		if err != nil {
+			log.Printf("[warm] %s: %v", j.path, err)
+			continue
+		}
+		warmed++
+	}
+	return warmed
+}
+
 func frameBrightness(path string) (float64, bool) {
 	f, err := os.Open(path)
 	if err != nil {

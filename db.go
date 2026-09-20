@@ -31,6 +31,7 @@ func initDB(dataDir string) *dbStore {
 	}
 
 	schema := `
+	DROP TABLE IF EXISTS favorites;
 	CREATE TABLE IF NOT EXISTS progress (
 		media_id TEXT PRIMARY KEY,
 		position REAL NOT NULL,
@@ -39,15 +40,18 @@ func initDB(dataDir string) *dbStore {
 		updated_at INTEGER NOT NULL
 	);
 
-	CREATE TABLE IF NOT EXISTS favorites (
-		media_id TEXT PRIMARY KEY,
-		created_at INTEGER NOT NULL
-	);
-
 	CREATE TABLE IF NOT EXISTS tags (
 		media_id TEXT NOT NULL,
 		tag TEXT NOT NULL,
 		PRIMARY KEY (media_id, tag)
+	);
+
+	CREATE TABLE IF NOT EXISTS media_cache (
+		path TEXT PRIMARY KEY,
+		mtime INTEGER NOT NULL,
+		size INTEGER NOT NULL,
+		kind TEXT NOT NULL,
+		data TEXT NOT NULL
 	);
 	`
 	if _, err := db.Exec(schema); err != nil {
@@ -60,6 +64,11 @@ func initDB(dataDir string) *dbStore {
 func (s *dbStore) SaveProgress(mediaID string, position, total float64, completed bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// 50%+ conta como visto/lido: sai do "Continuar" sozinho.
+	if !completed && total > 0 && position >= total/2 {
+		completed = true
+	}
 
 	// Concluído é pegajoso: reabrir e fechar um título terminado não
 	// o traz de volta ao "Continuar".
@@ -133,45 +142,58 @@ func (s *dbStore) DeleteProgress(mediaID string) {
 	_, _ = s.db.Exec(`DELETE FROM progress WHERE media_id = ?`, mediaID)
 }
 
-func (s *dbStore) ToggleFavorite(mediaID string) bool {
+// getMediaCache devolve o dado cacheado se mtime+tamanho conferem.
+// Nil-safe: sem banco, apenas miss.
+func (s *dbStore) getMediaCache(path string, mtime, size int64, kind string) (string, bool) {
+	if s == nil || s.db == nil {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var m, sz int64
+	var k, data string
+	err := s.db.QueryRow(`SELECT mtime, size, kind, data FROM media_cache WHERE path = ?`, path).Scan(&m, &sz, &k, &data)
+	if err != nil || k != kind || m != mtime || sz != size {
+		return "", false
+	}
+	return data, true
+}
+
+func (s *dbStore) setMediaCache(path string, mtime, size int64, kind, data string) {
+	if s == nil || s.db == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM favorites WHERE media_id = ?`, mediaID).Scan(&exists)
-	if err == nil {
-		s.db.Exec(`DELETE FROM favorites WHERE media_id = ?`, mediaID)
-		return false
+	_, _ = s.db.Exec(`INSERT INTO media_cache (path, mtime, size, kind, data) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, kind=excluded.kind, data=excluded.data`,
+		path, mtime, size, kind, data)
+}
+
+func (s *dbStore) pruneMediaCache(keep map[string]struct{}, kind string) {
+	if s == nil || s.db == nil {
+		return
 	}
-	s.db.Exec(`INSERT INTO favorites (media_id, created_at) VALUES (?, ?)`, mediaID, time.Now().Unix())
-	return true
-}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-func (s *dbStore) IsFavorite(mediaID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM favorites WHERE media_id = ?`, mediaID).Scan(&exists)
-	return err == nil
-}
-
-func (s *dbStore) GetAllFavorites() map[string]bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	res := make(map[string]bool)
-	rows, err := s.db.Query(`SELECT media_id FROM favorites`)
+	rows, err := s.db.Query(`SELECT path FROM media_cache WHERE kind = ?`, kind)
 	if err != nil {
-		return res
+		return
 	}
-	defer rows.Close()
-
+	var drop []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			res[id] = true
+		var p string
+		if err := rows.Scan(&p); err == nil {
+			if _, ok := keep[p]; !ok {
+				drop = append(drop, p)
+			}
 		}
 	}
-	return res
+	rows.Close()
+	for _, p := range drop {
+		_, _ = s.db.Exec(`DELETE FROM media_cache WHERE path = ?`, p)
+	}
 }

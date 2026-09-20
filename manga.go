@@ -122,7 +122,7 @@ func indexMangaCovers(baseDir string) map[string]string {
 	return result
 }
 
-func scanManga(dir string) ([]MangaSeries, map[string]string) {
+func scanManga(cache *dbStore, dir string) ([]MangaSeries, map[string]string) {
 	var series []MangaSeries
 	covers := make(map[string]string)
 	entries, err := os.ReadDir(dir)
@@ -130,6 +130,7 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 		return series, covers
 	}
 	coverIndex := indexMangaCovers(dir)
+	seen := make(map[string]struct{})
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -181,7 +182,8 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 					}
 				} else if chExt == ".cbz" || chExt == ".zip" {
 					// Arquivo CBZ/ZIP
-					if count, err := countZipImages(chPath); err == nil && count > 0 {
+					seen[chPath] = struct{}{}
+					if count, err := cachedZipCount(cache, chPath); err == nil && count > 0 {
 						cleanTitle := strings.TrimSuffix(ch.Name(), filepath.Ext(ch.Name()))
 						chapters = append(chapters, MangaChapter{
 							ID:        hashString(chPath),
@@ -213,7 +215,8 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 		} else {
 			// Arquivo CBZ solto na raiz do manga dir (ex: /data/manga/Berserk_Vol_01.cbz)
 			filePath := filepath.Join(dir, name)
-			if count, err := countZipImages(filePath); err == nil && count > 0 {
+			seen[filePath] = struct{}{}
+			if count, err := cachedZipCount(cache, filePath); err == nil && count > 0 {
 				cleanTitle := strings.TrimSuffix(name, filepath.Ext(name))
 				mangaID := hashString(name)
 				ch := MangaChapter{
@@ -244,6 +247,7 @@ func scanManga(dir string) ([]MangaSeries, map[string]string) {
 	sort.Slice(series, func(i, j int) bool {
 		return strings.ToLower(series[i].Title) < strings.ToLower(series[j].Title)
 	})
+	cache.pruneMediaCache(seen, "zip")
 	return series, covers
 }
 
@@ -261,6 +265,24 @@ func countZipImages(path string) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+func cachedZipCount(cache *dbStore, path string) (int, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	mt, sz := fi.ModTime().UnixNano(), fi.Size()
+	if raw, ok := cache.getMediaCache(path, mt, sz, "zip"); ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+			return n, nil
+		}
+	}
+	n, err := countZipImages(path)
+	if err == nil {
+		cache.setMediaCache(path, mt, sz, "zip", strconv.Itoa(n))
+	}
+	return n, err
 }
 
 func (s *server) serveMangaPage(w http.ResponseWriter, r *http.Request, ch MangaChapter, pageIdx int) {

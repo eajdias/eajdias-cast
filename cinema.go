@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type SubtitleTrack struct {
@@ -88,6 +91,25 @@ func probeTracks(path string) ([]AudioTrack, []SubtitleTrack) {
 		case "subtitle":
 			subs = append(subs, SubtitleTrack{ID: hashString(path + ":" + strconv.Itoa(stream.Index)), Label: label, Lang: lang, StreamIndex: stream.Index})
 		}
+	}
+	return audio, subs
+}
+
+type probeData struct {
+	Audio []AudioTrack    `json:"audio"`
+	Subs  []SubtitleTrack `json:"subs"`
+}
+
+func cachedProbeTracks(cache *dbStore, path string, mtime, size int64) ([]AudioTrack, []SubtitleTrack) {
+	if raw, ok := cache.getMediaCache(path, mtime, size, "probe"); ok {
+		var pd probeData
+		if json.Unmarshal([]byte(raw), &pd) == nil {
+			return pd.Audio, pd.Subs
+		}
+	}
+	audio, subs := probeTracks(path)
+	if raw, err := json.Marshal(probeData{Audio: audio, Subs: subs}); err == nil {
+		cache.setMediaCache(path, mtime, size, "probe", string(raw))
 	}
 	return audio, subs
 }
@@ -172,12 +194,13 @@ func coverInDir(dir string) string {
 	return ""
 }
 
-func scanCinema(dirs ...string) ([]VideoGroup, map[string]VideoMedia) {
+func scanCinema(cache *dbStore, dirs ...string) ([]VideoGroup, map[string]VideoMedia) {
 	mediaMap := make(map[string]VideoMedia)
 	showsMap := make(map[string]*VideoGroup)
 	var movies []VideoGroup
 
 	subMap := make(map[string][]SubtitleTrack)
+	seen := make(map[string]struct{})
 
 	for _, dir := range dirs {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
@@ -227,7 +250,8 @@ func scanCinema(dirs ...string) ([]VideoGroup, map[string]VideoMedia) {
 			parts := strings.Split(rel, string(filepath.Separator))
 			baseNoExt := strings.TrimSuffix(path, filepath.Ext(path))
 			subs := subMap[baseNoExt]
-			audioTracks, embeddedSubs := probeTracks(path)
+			seen[path] = struct{}{}
+			audioTracks, embeddedSubs := cachedProbeTracks(cache, path, info.ModTime().UnixNano(), info.Size())
 			subs = append(subs, embeddedSubs...)
 
 			id := hashString(path)
@@ -330,6 +354,7 @@ func scanCinema(dirs ...string) ([]VideoGroup, map[string]VideoMedia) {
 		return strings.ToLower(result[i].Title) < strings.ToLower(result[j].Title)
 	})
 
+	cache.pruneMediaCache(seen, "probe")
 	return result, mediaMap
 }
 
@@ -374,21 +399,125 @@ func serveEmbeddedSubtitle(w http.ResponseWriter, r *http.Request, sub subtitleR
 	}
 }
 
-// A troca de faixa produz MP4 fragmentado sob demanda: direct-play continua
-// como padrão e a conversão só é usada para a faixa escolhida pelo usuário.
-func (s *server) serveSelectedAudio(w http.ResponseWriter, r *http.Request, path string, audio int) {
-	// Remux não tem limite natural de concorrência (ao contrário do direct
-	// play): usa o mesmo semáforo dos thumbs para não empilhar ffmpeg de
-	// arquivos inteiros. Sem seek aqui: pipe fragmentado é linear.
-	s.sem <- struct{}{}
-	defer func() { <-s.sem }()
+// A troca de faixa remuxa uma vez para arquivo em cache e serve via
+// ServeContent: duração e seek funcionam. O pipe fragmentado anterior não
+// tinha duração nem Range, quebrando tempo total e seek no player.
+func (s *server) serveSelectedAudio(w http.ResponseWriter, r *http.Request, v VideoMedia, audio int) {
+	if audio < 0 || audio >= len(v.AudioTracks) {
+		http.NotFound(w, r)
+		return
+	}
+	dir := filepath.Join(s.cacheDir, "audio")
+	_ = os.MkdirAll(dir, 0755)
+	dst := s.audioCachePath(v, audio)
+
+	if _, err := os.Stat(dst); err != nil {
+		s.amu.Lock()
+		if ch, ok := s.audioInflight[dst]; ok {
+			s.amu.Unlock()
+			<-ch
+		} else {
+			ch := make(chan struct{})
+			s.audioInflight[dst] = ch
+			s.amu.Unlock()
+
+			s.sem <- struct{}{}
+			err := s.buildAudioRemux(v, audio, dst)
+			<-s.sem
+
+			s.amu.Lock()
+			delete(s.audioInflight, dst)
+			s.amu.Unlock()
+			close(ch)
+			if err != nil {
+				log.Printf("[audio] %v", err)
+				http.Error(w, "Não foi possível converter o áudio", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	f, err := os.Open(dst)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+
+	fi, _ := f.Stat()
+	cleanupAudioCache(s.cacheDir, audioCacheMaxBytes)
 	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Cache-Control", "no-store")
-	cmd := exec.CommandContext(r.Context(), "ffmpeg", "-nostdin", "-v", "error", "-i", path,
-		"-map", "0:v:0", "-map", "0:a:"+strconv.Itoa(audio), "-c:v", "copy", "-c:a", "aac",
-		"-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1")
-	cmd.Stdout = w
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "[audio] %v\n", err)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, filepath.Base(dst), fi.ModTime(), f)
+}
+
+func (s *server) audioCachePath(v VideoMedia, audio int) string {
+	return filepath.Join(s.cacheDir, "audio", "audio_"+v.ID+"_"+strconv.Itoa(audio)+"_"+thumbFingerprint(v.Path)+".mp4")
+}
+
+func audioCopyCodecs(codec string) bool {
+	switch strings.ToLower(codec) {
+	case "aac", "mp3", "opus":
+		return true
+	}
+	return false
+}
+
+func (s *server) buildAudioRemux(v VideoMedia, audio int, dst string) error {
+	tmp := dst + ".tmp"
+	acodec := []string{"-c:a", "aac"}
+	if audioCopyCodecs(v.AudioTracks[audio].Codec) {
+		acodec = []string{"-c:a", "copy"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-y", "-v", "error",
+		"-i", v.Path,
+		"-map", "0:v:0", "-map", "0:a:"+strconv.Itoa(audio),
+		"-c:v", "copy", acodec[0], acodec[1],
+		"-movflags", "faststart", "-f", "mp4", tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("remux %s faixa %d: %v %.200s", v.Path, audio, err, out)
+	}
+	return os.Rename(tmp, dst)
+}
+
+const audioCacheMaxBytes = 10 << 30 // 10GB
+
+func cleanupAudioCache(cacheDir string, maxBytes int64) {
+	dir := filepath.Join(cacheDir, "audio")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	type cached struct {
+		path  string
+		size  int64
+		mtime time.Time
+	}
+	var files []cached
+	var total int64
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			os.Remove(p) // resto de conversão interrompida
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || fi.IsDir() {
+			continue
+		}
+		files = append(files, cached{p, fi.Size(), fi.ModTime()})
+		total += fi.Size()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mtime.Before(files[j].mtime) })
+	for _, f := range files {
+		if total <= maxBytes {
+			break
+		}
+		if err := os.Remove(f.path); err == nil {
+			total -= f.size
+		}
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"os"
@@ -36,9 +37,41 @@ func isAudioFile(name string) bool {
 	return ext == ".mp3" || ext == ".flac" || ext == ".m4a" || ext == ".ogg" || ext == ".opus" || ext == ".wav" || ext == ".aac"
 }
 
-func scanMusic(dir string) ([]AlbumGroup, map[string]Track) {
+type trackMeta struct {
+	Title  string `json:"title"`
+	Artist string `json:"artist"`
+	Album  string `json:"album"`
+	Track  int    `json:"track"`
+	Cover  bool   `json:"cover"`
+}
+
+func cachedTrackMeta(cache *dbStore, path string, mtime, size int64) (trackMeta, bool) {
+	if raw, ok := cache.getMediaCache(path, mtime, size, "track"); ok {
+		var tm trackMeta
+		if json.Unmarshal([]byte(raw), &tm) == nil {
+			return tm, true
+		}
+	}
+	if f, err := os.Open(path); err == nil {
+		tm := trackMeta{}
+		if m, err := tag.ReadFrom(f); err == nil {
+			tm.Title, tm.Artist, tm.Album = m.Title(), m.Artist(), m.Album()
+			tm.Track, _ = m.Track()
+			tm.Cover = m.Picture() != nil
+		}
+		f.Close()
+		if raw, err := json.Marshal(tm); err == nil {
+			cache.setMediaCache(path, mtime, size, "track", string(raw))
+		}
+		return tm, true
+	}
+	return trackMeta{}, false
+}
+
+func scanMusic(cache *dbStore, dir string) ([]AlbumGroup, map[string]Track) {
 	trackMap := make(map[string]Track)
 	albumsMap := make(map[string]*AlbumGroup)
+	seen := make(map[string]struct{})
 
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -63,25 +96,20 @@ func scanMusic(dir string) ([]AlbumGroup, map[string]Track) {
 			Size:   info.Size(),
 		}
 
-		// Tentar ler tags ID3/metadata
-		if f, err := os.Open(path); err == nil {
-			if m, err := tag.ReadFrom(f); err == nil {
-				if m.Title() != "" {
-					t.Title = m.Title()
-				}
-				if m.Artist() != "" {
-					t.Artist = m.Artist()
-				}
-				if m.Album() != "" {
-					t.Album = m.Album()
-				}
-				tr, _ := m.Track()
-				t.TrackNumber = tr
-				if m.Picture() != nil {
-					t.HasCover = true
-				}
+		// Tentar ler tags ID3/metadata (com cache por mtime+tamanho)
+		seen[path] = struct{}{}
+		if tm, ok := cachedTrackMeta(cache, path, info.ModTime().UnixNano(), info.Size()); ok {
+			if tm.Title != "" {
+				t.Title = tm.Title
 			}
-			f.Close()
+			if tm.Artist != "" {
+				t.Artist = tm.Artist
+			}
+			if tm.Album != "" {
+				t.Album = tm.Album
+			}
+			t.TrackNumber = tm.Track
+			t.HasCover = tm.Cover
 		}
 
 		trackMap[trackID] = t
@@ -123,6 +151,7 @@ func scanMusic(dir string) ([]AlbumGroup, map[string]Track) {
 		return strings.ToLower(result[i].Album) < strings.ToLower(result[j].Album)
 	})
 
+	cache.pruneMediaCache(seen, "track")
 	return result, trackMap
 }
 

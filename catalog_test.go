@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func jsonDecodeBody(rec *httptest.ResponseRecorder, v any) error {
@@ -53,7 +54,7 @@ func TestMoviesWithEDigitNamesStayMovies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	groups, _ := scanCinema(root)
+	groups, _ := scanCinema(nil, root)
 	if len(groups) != 2 {
 		t.Fatalf("got %d groups, want 2", len(groups))
 	}
@@ -215,5 +216,142 @@ func TestTagsRoundtrip(t *testing.T) {
 	}
 	if len(after.Tags) != 1 || after.Tags[0] != "ficção_top" {
 		t.Fatalf("delete: %v", after.Tags)
+	}
+}
+
+func TestAudioCopyCodecs(t *testing.T) {
+	for _, c := range []string{"aac", "mp3", "opus", "AAC", "Opus"} {
+		if !audioCopyCodecs(c) {
+			t.Errorf("%q: want copy", c)
+		}
+	}
+	for _, c := range []string{"", "eac3", "ac3", "dts", "truehd", "flac", "vorbis"} {
+		if audioCopyCodecs(c) {
+			t.Errorf("%q: want transcode", c)
+		}
+	}
+}
+
+func TestMediaCacheRoundtripAndPrune(t *testing.T) {
+	s := initDB(t.TempDir())
+
+	if _, ok := s.getMediaCache("/x", 1, 2, "probe"); ok {
+		t.Fatal("miss esperado")
+	}
+	var nilDB *dbStore
+	if _, ok := nilDB.getMediaCache("/x", 1, 2, "probe"); ok {
+		t.Fatal("nil db deve dar miss")
+	}
+	nilDB.setMediaCache("/x", 1, 2, "probe", "{}")
+	nilDB.pruneMediaCache(map[string]struct{}{}, "probe")
+
+	s.setMediaCache("/a", 10, 100, "probe", `{"audio":[]}`)
+	s.setMediaCache("/b", 10, 100, "probe", `{"audio":[]}`)
+	if raw, ok := s.getMediaCache("/a", 10, 100, "probe"); !ok || raw != `{"audio":[]}` {
+		t.Fatalf("hit esperado: %q %v", raw, ok)
+	}
+	if _, ok := s.getMediaCache("/a", 11, 100, "probe"); ok {
+		t.Fatal("mtime mudou: miss esperado")
+	}
+	if _, ok := s.getMediaCache("/a", 10, 101, "probe"); ok {
+		t.Fatal("size mudou: miss esperado")
+	}
+
+	s.pruneMediaCache(map[string]struct{}{"/a": {}}, "probe")
+	if _, ok := s.getMediaCache("/b", 10, 100, "probe"); ok {
+		t.Fatal("/b deveria ter sido podado")
+	}
+	if _, ok := s.getMediaCache("/a", 10, 100, "probe"); !ok {
+		t.Fatal("/a deveria permanecer")
+	}
+}
+
+func TestGenerateThumbs(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "poster.jpg")
+	img := image.NewRGBA(image.Rect(0, 0, 32, 16))
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(f, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	cache := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cache, "thumbs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{
+		cacheDir:  cache,
+		sem:       make(chan struct{}, 2),
+		cinemaMap: map[string]VideoMedia{"v1": {ID: "v1", Path: src}},
+	}
+	if n := s.generateThumbs(480); n != 1 {
+		t.Fatalf("got %d warmed, want 1", n)
+	}
+	if n := s.generateThumbs(480); n != 0 {
+		t.Fatalf("existing thumb regenerated: %d", n)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "thumbs")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAudioCacheEvictsOldestFirst(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "audio")
+	if err := os.MkdirAll(audio, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string, size int, age time.Duration) {
+		p := filepath.Join(audio, name)
+		if err := os.WriteFile(p, make([]byte, size), 0644); err != nil {
+			t.Fatal(err)
+		}
+		ts := time.Now().Add(-age)
+		if err := os.Chtimes(p, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("old.mp4", 10, 3*time.Hour)
+	mk("mid.mp4", 10, 2*time.Hour)
+	mk("new.mp4", 10, time.Hour)
+	mk("stale.tmp", 10, 4*time.Hour)
+
+	cleanupAudioCache(dir, 25)
+
+	for _, name := range []string{"mid.mp4", "new.mp4"} {
+		if _, err := os.Stat(filepath.Join(audio, name)); err != nil {
+			t.Fatalf("%s deveria permanecer: %v", name, err)
+		}
+	}
+	for _, name := range []string{"old.mp4", "stale.tmp"} {
+		if _, err := os.Stat(filepath.Join(audio, name)); err == nil {
+			t.Fatalf("%s deveria ter sido removido", name)
+		}
+	}
+}
+
+func TestSaveProgressHalfCountsAsDone(t *testing.T) {
+	s := initDB(t.TempDir())
+	if err := s.SaveProgress("m1", 60, 100, false); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.GetProgress("m1"); !rec.Completed {
+		t.Fatal("60% deveria concluir")
+	}
+	if err := s.SaveProgress("m2", 40, 100, false); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.GetProgress("m2"); rec.Completed {
+		t.Fatal("40% não deveria concluir")
+	}
+	if err := s.SaveProgress("m3", 5, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.GetProgress("m3"); rec.Completed {
+		t.Fatal("total 0 não deveria concluir")
 	}
 }

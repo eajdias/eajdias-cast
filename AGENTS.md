@@ -28,14 +28,14 @@ PORT=8080 PASSWORD=cast123 MEDIA_DIR=/tmp/opencode/media CACHE_DIR=/tmp/opencode
 ## Architecture quirks
 
 - `main.go`: routing (`net/http` ServeMux with `GET /{$}` pattern), 30s rescan throttle (`rescanIfNeeded`, I/O outside the write lock), background pre-index at startup.
-- `cinema.go`: video scan/grouping, `ffprobe` for audio/subtitle tracks, `ffmpeg` for embedded-subtitle extraction. `http.ServeContent` handles Range/`206` — do not reimplement. Embedded subs indexed with video path via `indexSubtitles` (`subtitleRef.MediaPath`); alternate-audio remux shares `s.sem` and is linear (no seek).
-- `thumbs.go`: video thumbs shell out to `ffmpeg`, max 2 concurrent (`s.sem`). Frame candidates (ss 30/10/5/1) pass a brightness check — first non-black wins, v4 cache key includes mtime+size. Requires `ffmpeg`+`ffprobe` on PATH locally (Docker image installs them); without them video thumbs/subs fail.
+- `cinema.go`: video scan/grouping, `ffprobe` for audio/subtitle tracks, `ffmpeg` for embedded-subtitle extraction. `http.ServeContent` handles Range/`206` — do not reimplement. Embedded subs indexed with video path via `indexSubtitles` (`subtitleRef.MediaPath`); alternate-audio remuxes once to `cache/audio/` (copy for aac/mp3/opus, else aac + faststart) and serves seekable; eviction = 10GB oldest-first (`audioCacheMaxBytes`), progress at `GET /api/audio-progress`.
+- `thumbs.go`: video thumbs shell out to `ffmpeg`, max 2 concurrent (`s.sem`). Frame candidates (ss 30/10/5/1) pass a brightness check — first non-black wins, v4 cache key includes mtime+size. Boot warms missing thumbs (480/720) in background; audio remux stays on-demand (each track ≈ movie size on disk). Requires `ffmpeg`+`ffprobe` on PATH locally (Docker image installs them); without them video thumbs/subs fail.
 - `manga.go`: reads `.cbz`/`.zip`/image dirs without extracting; natural sort (`Cap 2` < `Cap 10`).
 - `music.go`: `github.com/dhowden/tag` for ID3 + embedded covers.
-- `db.go`: pure-Go `modernc.org/sqlite`, `CGO_ENABLED=0` (see `Dockerfile`). Progress + favorites tables only. Progress `completed` sticks (reopen+close won't un-complete); dismiss via `DELETE /api/progress?media_id=`; video saves <3s are skipped client-side.
+- `db.go`: pure-Go `modernc.org/sqlite`, `CGO_ENABLED=0` (see `Dockerfile`). Progress + tags tables only (`media_cache` stores scan results by path+mtime+size). Progress auto-completes at 50%+ and sticks; dismiss via `DELETE /api/progress?media_id=`; video saves <3s are skipped client-side.
 - `tags.go`: custom per-media tags (`GET/POST/DELETE /api/tags`, normalized lower/underscore).
 - `auth.go`: HMAC cookie `cast_session` (30d, HttpOnly, Lax). `/api/*` returns `401` JSON; browser paths redirect to `/login`.
-- `static/` changes require rebuild (embedded). `handleIndex` cache-busts `app.js`/`style.css` via content hash. Frontend: cinema cards `.wide` 16/9, thumbs `&w=` by DPR/network (`thumbW`), reader preloads next page, catalog fetches abortable per tab, offscreen thumbs unload via IntersectionObserver, hold video = 2x.
+- `static/` changes require rebuild (embedded). `handleIndex` cache-busts `app.js`/`style.css` via content hash. Frontend: cinema cards `.wide` 16/9, thumbs `&w=` by DPR/network (`thumbW`), reader preloads next page, catalog fetches abortable per tab, offscreen thumbs unload via IntersectionObserver, hold video = 2x, default audio JPN→ENG and subs PT-BR remembered in `localStorage` (`pickAudioIdx`/`pickSubIdx`), next-episode overlay with 10s countdown, chapter advance at reader edges, reader always single-page (spreads full-width via contain), cache panel (`GET/POST /api/cache`), PWA manifest.
 - Container runs as uid `20000` (`cast`); media mount is `:ro`.
 
 ## Conventions

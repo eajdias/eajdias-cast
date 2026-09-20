@@ -571,6 +571,31 @@ body {
   border-radius: 6px;
   pointer-events: none;
 }
+.video-status { top: 100px; font-weight: 400; }
+.next-overlay {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid var(--border);
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.next-actions { display: flex; align-items: center; gap: 0.4rem; }
+.next-go {
+  background: #a277ff;
+  color: #0c0d12;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
 #video-tags { padding: 0.5rem 1.25rem; }
 .card-cover.wide { aspect-ratio: 16/9; }
 .tag-editor { padding: 0.75rem 0 0.25rem; }
@@ -606,6 +631,30 @@ body {
   font-size: 0.85rem;
   padding: 0.5rem 0.75rem;
 }
+.cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+.cache-info { font-size: 0.85rem; color: var(--text-muted); }
+.cache-actions { display: flex; gap: 0.5rem; }
+.chip-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  border-radius: 20px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.chip-btn:hover { background: var(--surface-hover); }
 
 /* Manga Reader - Lightbox Imersivo (estilo zub-vault) */
 .reader-overlay {
@@ -686,14 +735,6 @@ body {
   -webkit-touch-callout: none;
   transform-origin: center center;
   will-change: transform;
-}
-.reader-canvas.double-page {
-  flex-direction: row;
-  gap: 0;
-}
-.reader-canvas.double-page img {
-  max-width: 50%;
-  width: 50%;
 }
 
 /* Navegação lateral (setas) */
