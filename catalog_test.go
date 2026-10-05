@@ -355,3 +355,126 @@ func TestSaveProgressHalfCountsAsDone(t *testing.T) {
 		t.Fatal("total 0 não deveria concluir")
 	}
 }
+
+func TestAllTagsAndMediaIDsWithTags(t *testing.T) {
+	s := initDB(t.TempDir())
+	s.AddTag("m1", "Ação")
+	s.AddTag("m1", "Comédia")
+	s.AddTag("m2", "ação")
+
+	got := s.AllTags("", 20)
+	if len(got) != 2 || got[0].Tag != "ação" || got[0].Count != 2 {
+		t.Fatalf("all: %+v", got)
+	}
+	if got := s.AllTags("aç", 20); len(got) != 1 || got[0].Tag != "ação" {
+		t.Fatalf("prefix: %+v", got)
+	}
+	ids := s.MediaIDsWithTags([]string{"ação"})
+	if len(ids) != 2 || !ids["m1"] || !ids["m2"] {
+		t.Fatalf("and-1: %v", ids)
+	}
+	if ids := s.MediaIDsWithTags([]string{"ação", "comédia"}); len(ids) != 1 || !ids["m1"] {
+		t.Fatalf("and-2: %v", ids)
+	}
+	if ids := s.MediaIDsWithTags([]string{"inexistente"}); len(ids) != 0 {
+		t.Fatalf("empty: %v", ids)
+	}
+}
+
+func TestMangaCoverSetGetClear(t *testing.T) {
+	s := initDB(t.TempDir())
+	if _, ok := s.GetMangaCover("s1"); ok {
+		t.Fatal("miss esperado")
+	}
+	s.SetMangaCover("s1", "ch9", 4)
+	rec, ok := s.GetMangaCover("s1")
+	if !ok || rec.ChapterID != "ch9" || rec.Page != 4 {
+		t.Fatalf("got %+v ok=%v", rec, ok)
+	}
+	s.SetMangaCover("s1", "ch10", 0)
+	if rec, _ := s.GetMangaCover("s1"); rec.ChapterID != "ch10" {
+		t.Fatalf("upsert: %+v", rec)
+	}
+	s.ClearMangaCover("s1")
+	if _, ok := s.GetMangaCover("s1"); ok {
+		t.Fatal("clear deveria remover")
+	}
+}
+
+func TestHandleTagsAll(t *testing.T) {
+	s := &server{db: initDB(t.TempDir())}
+	s.db.AddTag("m1", "Ação")
+	rec := httptest.NewRecorder()
+	s.handleTagsAll(rec, httptest.NewRequest("GET", "/api/tags/all?prefix=a", nil))
+	var d struct {
+		Tags []tagFreq `json:"tags"`
+	}
+	if err := jsonDecodeBody(rec, &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Tags) != 1 || d.Tags[0].Tag != "ação" {
+		t.Fatalf("got %+v", d.Tags)
+	}
+}
+
+func TestHandleMangaCoverSetValidates(t *testing.T) {
+	s := &server{
+		db:          initDB(t.TempDir()),
+		lastScan:    time.Now(),
+		cinemaItems: []VideoGroup{},
+		mangaChMap:  map[string]MangaChapter{"ch1": {ID: "ch1", Title: "Cap 1", PageCount: 10}},
+		mangaItems:  []MangaSeries{{ID: "s1", Title: "S", Chapters: []MangaChapter{{ID: "ch1", Title: "Cap 1", PageCount: 10}}}},
+	}
+	bad := []string{
+		`{"series_id":"s1","chapter_id":"chX","page":0}`,
+		`{"series_id":"sX","chapter_id":"ch1","page":0}`,
+		`{"series_id":"s1","chapter_id":"ch1","page":99}`,
+		`{"series_id":"","chapter_id":"ch1"}`,
+	}
+	for _, b := range bad {
+		rec := httptest.NewRecorder()
+		s.handleMangaCoverSet(rec, httptest.NewRequest("POST", "/api/manga/cover", strings.NewReader(b)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: got %d, want 400", b, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	s.handleMangaCoverSet(rec, httptest.NewRequest("POST", "/api/manga/cover", strings.NewReader(`{"series_id":"s1","chapter_id":"ch1","page":3}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid: got %d", rec.Code)
+	}
+	if cov, ok := s.db.GetMangaCover("s1"); !ok || cov.Page != 3 {
+		t.Fatalf("not stored: %+v %v", cov, ok)
+	}
+}
+
+func TestFfSlotsAutoAndOverride(t *testing.T) {
+	t.Setenv("FF_SLOTS", "")
+	n := ffSlots()
+	if n < 1 || n > 8 {
+		t.Fatalf("auto fora da faixa: %d", n)
+	}
+	t.Setenv("FF_SLOTS", "6")
+	if got := ffSlots(); got != 6 {
+		t.Fatalf("override: got %d, want 6", got)
+	}
+	t.Setenv("FF_SLOTS", "99")
+	if got := ffSlots(); got != n {
+		t.Fatalf("99 deve ser ignorado: got %d, want %d", got, n)
+	}
+	t.Setenv("FF_SLOTS", "0")
+	if got := ffSlots(); got != n {
+		t.Fatalf("0 deve ser ignorado: got %d, want %d", got, n)
+	}
+}
+
+func TestVaapiDeviceRespectsEnv(t *testing.T) {
+	t.Setenv("FF_VAAPI", "0")
+	if got := vaapiDevice(); got != "" {
+		t.Fatalf("FF_VAAPI=0: got %q, want vazio", got)
+	}
+	t.Setenv("FF_VAAPI", "/dev/dri/inexistente-xyz")
+	if got := vaapiDevice(); got != "" {
+		t.Fatalf("device inválido: got %q, want vazio", got)
+	}
+}

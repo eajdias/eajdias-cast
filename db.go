@@ -53,6 +53,12 @@ func initDB(dataDir string) *dbStore {
 		kind TEXT NOT NULL,
 		data TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS manga_covers (
+		series_id TEXT PRIMARY KEY,
+		chapter_id TEXT NOT NULL,
+		page INTEGER NOT NULL DEFAULT 0
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("Falha ao criar tabelas: %v", err)
@@ -140,6 +146,40 @@ func (s *dbStore) DeleteProgress(mediaID string) {
 	defer s.mu.Unlock()
 
 	_, _ = s.db.Exec(`DELETE FROM progress WHERE media_id = ?`, mediaID)
+}
+
+type MangaCoverRec struct {
+	SeriesID  string
+	ChapterID string
+	Page      int
+}
+
+func (s *dbStore) SetMangaCover(seriesID, chapterID string, page int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec(`INSERT INTO manga_covers (series_id, chapter_id, page) VALUES (?, ?, ?)
+		ON CONFLICT(series_id) DO UPDATE SET chapter_id=excluded.chapter_id, page=excluded.page`,
+		seriesID, chapterID, page)
+}
+
+func (s *dbStore) GetMangaCover(seriesID string) (MangaCoverRec, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var rec MangaCoverRec
+	err := s.db.QueryRow(`SELECT series_id, chapter_id, page FROM manga_covers WHERE series_id = ?`, seriesID).Scan(&rec.SeriesID, &rec.ChapterID, &rec.Page)
+	if err != nil {
+		return MangaCoverRec{}, false
+	}
+	return rec, true
+}
+
+func (s *dbStore) ClearMangaCover(seriesID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec(`DELETE FROM manga_covers WHERE series_id = ?`, seriesID)
 }
 
 // getMediaCache devolve o dado cacheado se mtime+tamanho conferem.

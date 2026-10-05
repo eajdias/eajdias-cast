@@ -43,6 +43,7 @@ type server struct {
 	sem      chan struct{}
 	tmu      sync.Mutex
 	inflight map[string]*thumbCall
+	vaapiDev string
 	// remux de faixa de áudio em andamento (mesmo padrão dos thumbs)
 	amu           sync.Mutex
 	audioInflight map[string]chan struct{}
@@ -223,10 +224,12 @@ func main() {
 		mangaCoverMap:     make(map[string]string),
 		mangaChapterCover: make(map[string]string),
 		subtitleMap:       make(map[string]subtitleRef),
-		sem:               make(chan struct{}, 2),
+		sem:               make(chan struct{}, ffSlots()),
 		inflight:          make(map[string]*thumbCall),
+		vaapiDev:          vaapiDevice(),
 		audioInflight:     make(map[string]chan struct{}),
 	}
+	log.Printf("[ffmpeg] slots=%d vaapi=%s", ffSlots(), srv.vaapiDev)
 
 	// Pré-indexar mídias no startup em background
 	go srv.rescanIfNeeded()
@@ -253,7 +256,9 @@ func main() {
 	mux.HandleFunc("GET /api/tags", srv.requireAuth(srv.handleTagsList))
 	mux.HandleFunc("POST /api/tags", srv.requireAuth(srv.handleTagsAdd))
 	mux.HandleFunc("DELETE /api/tags", srv.requireAuth(srv.handleTagsDelete))
+	mux.HandleFunc("GET /api/tags/all", srv.requireAuth(srv.handleTagsAll))
 	mux.HandleFunc("GET /api/thumb", srv.requireAuth(srv.handleThumb))
+	mux.HandleFunc("GET /api/progress/all", srv.requireAuth(srv.handleProgressAll))
 
 	// API Cinema
 	mux.HandleFunc("GET /api/cinema", srv.requireAuth(srv.handleCinemaList))
@@ -266,6 +271,8 @@ func main() {
 	mux.HandleFunc("GET /api/manga", srv.requireAuth(srv.handleMangaList))
 	mux.HandleFunc("GET /api/manga/cover", srv.requireAuth(srv.handleMangaCover))
 	mux.HandleFunc("GET /api/manga/page", srv.requireAuth(srv.handleMangaPage))
+	mux.HandleFunc("POST /api/manga/cover", srv.requireAuth(srv.handleMangaCoverSet))
+	mux.HandleFunc("DELETE /api/manga/cover", srv.requireAuth(srv.handleMangaCoverClear))
 
 	// API Música
 	mux.HandleFunc("GET /api/music", srv.requireAuth(srv.handleMusicList))
@@ -389,6 +396,7 @@ func (s *server) handleCinemaList(w http.ResponseWriter, r *http.Request) {
 	items := append([]VideoGroup{}, s.cinemaItems...)
 	for i := range items {
 		items[i].CoverURL = "/api/thumb?id=" + items[i].ID
+		items[i].Tags = s.db.GetTags(items[i].ID)
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -481,7 +489,69 @@ func (s *server) handleMangaList(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []MangaSeries{}
 	}
+	// Capa customizada ("usar página como capa", padrão Mihon) tem
+	// precedência sobre a capa detectada no scan.
+	for i := range items {
+		if cov, ok := s.db.GetMangaCover(items[i].ID); ok {
+			items[i].CoverURL = "/api/manga/page?ch=" + cov.ChapterID + "&p=" + strconv.Itoa(cov.Page)
+		}
+		items[i].Tags = s.db.GetTags(items[i].ID)
+	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// handleProgressAll devolve o mapa media_id -> progresso (para estado
+// "lido/não-lido" e badges sem N requests).
+func (s *server) handleProgressAll(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"progress": s.db.GetAllProgress()})
+}
+
+func (s *server) mangaSeriesOfChapter(chID string) (MangaSeries, bool) {
+	for _, m := range s.mangaItems {
+		for _, ch := range m.Chapters {
+			if ch.ID == chID {
+				return m, true
+			}
+		}
+	}
+	return MangaSeries{}, false
+}
+
+func (s *server) handleMangaCoverSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SeriesID  string `json:"series_id"`
+		ChapterID string `json:"chapter_id"`
+		Page      int    `json:"page"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.SeriesID == "" || body.ChapterID == "" {
+		http.Error(w, "series_id e chapter_id obrigatórios", http.StatusBadRequest)
+		return
+	}
+	s.rescanIfNeeded()
+	s.mu.RLock()
+	ch, ok := s.mangaChMap[body.ChapterID]
+	series, sok := s.mangaSeriesOfChapter(body.ChapterID)
+	s.mu.RUnlock()
+	if !ok || !sok || series.ID != body.SeriesID {
+		http.Error(w, "capítulo não pertence à série", http.StatusBadRequest)
+		return
+	}
+	if body.Page < 0 || body.Page >= ch.PageCount {
+		http.Error(w, "página inválida", http.StatusBadRequest)
+		return
+	}
+	s.db.SetMangaCover(body.SeriesID, body.ChapterID, body.Page)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *server) handleMangaCoverClear(w http.ResponseWriter, r *http.Request) {
+	seriesID := r.URL.Query().Get("series_id")
+	if seriesID == "" {
+		http.Error(w, "series_id obrigatório", http.StatusBadRequest)
+		return
+	}
+	s.db.ClearMangaCover(seriesID)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *server) handleMangaPage(w http.ResponseWriter, r *http.Request) {
@@ -508,6 +578,10 @@ func (s *server) handleMusicList(w http.ResponseWriter, r *http.Request) {
 	items := s.musicAlbums
 	if items == nil {
 		items = []AlbumGroup{}
+	}
+	items = append([]AlbumGroup{}, items...)
+	for i := range items {
+		items[i].Tags = s.db.GetTags(items[i].CoverID)
 	}
 	writeJSON(w, http.StatusOK, items)
 }

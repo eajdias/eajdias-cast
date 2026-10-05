@@ -115,11 +115,12 @@ func cachedProbeTracks(cache *dbStore, path string, mtime, size int64) ([]AudioT
 }
 
 type VideoGroup struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Type      string `json:"type"`     // "movie" | "show"
-	Category  string `json:"category"` // "filme" | "serie" | "anime" | "video"
-	CoverURL  string `json:"cover_url,omitempty"`
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Type      string   `json:"type"`     // "movie" | "show"
+	Category  string   `json:"category"` // "filme" | "serie" | "anime" | "video"
+	CoverURL  string   `json:"cover_url,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
 	coverPath string
 	Episodes  []VideoMedia `json:"episodes,omitempty"`
 	Movie     *VideoMedia  `json:"movie,omitempty"`

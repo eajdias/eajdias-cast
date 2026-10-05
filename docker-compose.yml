@@ -10,6 +10,12 @@ services:
       PASSWORD: ${PASSWORD:-cast123}
       MEDIA_DIR: /data/media
       CACHE_DIR: /data/cache
+      FF_SLOTS: ${FF_SLOTS:-}
+      FF_VAAPI: ${FF_VAAPI:-}
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
     volumes:
       - ${MEDIA_BIND:-/mnt/homelab/media}:/data/media:ro
       - ${CACHE_BIND:-./data/cache}:/data/cache

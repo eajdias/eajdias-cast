@@ -25,6 +25,7 @@ type MangaSeries struct {
 	ID       string         `json:"id"`
 	Title    string         `json:"title"`
 	CoverURL string         `json:"cover_url"`
+	Tags     []string       `json:"tags,omitempty"`
 	Chapters []MangaChapter `json:"chapters"`
 }
 

@@ -26,10 +26,11 @@ type Track struct {
 }
 
 type AlbumGroup struct {
-	Album   string  `json:"album"`
-	Artist  string  `json:"artist"`
-	CoverID string  `json:"cover_id"`
-	Tracks  []Track `json:"tracks"`
+	Album   string   `json:"album"`
+	Artist  string   `json:"artist"`
+	CoverID string   `json:"cover_id"`
+	Tags    []string `json:"tags,omitempty"`
+	Tracks  []Track  `json:"tracks"`
 }
 
 func isAudioFile(name string) bool {

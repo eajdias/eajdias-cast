@@ -80,12 +80,13 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 <title>eajdias-cast - Login</title>
 <style>
   @font-face { font-family: "Inter"; src: url("/static/inter-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
-  body { background: #0c0d12; color: #f0f0f5; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  .box { background: linear-gradient(180deg, #1a1d31, #161822); padding: 2.5rem; border-radius: 18px; border: 1px solid rgba(255,255,255,0.1); width: 100%; max-width: 340px; box-shadow: 0 24px 60px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06); text-align: center; }
-  h1 { margin: 0 0 1.5rem; font-size: 1.5rem; color: #a277ff; letter-spacing: -0.02em; }
-  input { width: 100%; padding: 0.75rem 1rem; box-sizing: border-box; background: #0c0d12; border: 1px solid #333852; border-radius: 8px; color: #fff; margin-bottom: 1.2rem; font-size: 1rem; }
-  input:focus { outline: none; border-color: #a277ff; }
-  button { width: 100%; padding: 0.8rem; background: #a277ff; color: #0c0d12; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; transition: opacity 0.2s; }
+  body { background: #0b0b0e; color: #ece7df; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .box { background: #131318; padding: 2.5rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.07); width: 100%; max-width: 340px; text-align: center; }
+  h1 { margin: 0 0 1.5rem; font-size: 1.5rem; color: #ece7df; letter-spacing: -0.02em; }
+  h1 b { color: #e8b25a; }
+  input { width: 100%; padding: 0.75rem 1rem; box-sizing: border-box; background: #0b0b0e; border: 1px solid #33322e; border-radius: 6px; color: #fff; margin-bottom: 1.2rem; font-size: 1rem; }
+  input:focus { outline: none; border-color: #e8b25a; }
+  button { width: 100%; padding: 0.8rem; background: #e8b25a; color: #1a1206; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem; transition: opacity 0.2s; }
   button:hover { opacity: 0.9; }
   .err { color: #ff5555; margin-bottom: 1rem; font-size: 0.85rem; }
 </style>
