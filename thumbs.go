@@ -241,7 +241,7 @@ func frameBrightness(path string) (float64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return 0, false
@@ -311,7 +311,7 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	if data, err := os.ReadFile(dst); err == nil {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Write(data)
+		_, _ = w.Write(data)
 		return
 	}
 
@@ -322,7 +322,7 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		if data, err := os.ReadFile(dst); err == nil {
 			w.Header().Set("Content-Type", "image/jpeg")
 			w.Header().Set("Cache-Control", "public, max-age=86400")
-			w.Write(data)
+			_, _ = w.Write(data)
 			return
 		}
 		http.NotFound(w, r)
@@ -355,7 +355,7 @@ func (s *server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *server) buildThumb(srcPath, dst string, width int) error {
@@ -372,17 +372,17 @@ func (s *server) buildThumb(srcPath, dst string, width int) error {
 	if isImageFile(srcPath) {
 		if f, err := os.Open(srcPath); err == nil {
 			img, _, err := image.Decode(f)
-			f.Close()
+			_ = f.Close()
 			if err == nil {
 				out, err := os.Create(tmp)
 				if err != nil {
 					return err
 				}
 				if err := jpeg.Encode(out, scaleFit(img, width), &jpeg.Options{Quality: 82}); err != nil {
-					out.Close()
+					_ = out.Close()
 					return err
 				}
-				out.Close()
+				_ = out.Close()
 				return os.Rename(tmp, dst)
 			}
 		}
@@ -402,16 +402,16 @@ func (s *server) buildThumb(srcPath, dst string, width int) error {
 		if img := tryThumbAttempt(srcPath, tmpSS, width, ss, va); img != "" {
 			luma, ok := frameBrightness(img)
 			if !ok {
-				os.Remove(img)
+				_ = os.Remove(img)
 				continue
 			}
 			if luma > bestLuma {
 				if best != "" {
-					os.Remove(best)
+					_ = os.Remove(best)
 				}
 				best, bestLuma = img, luma
 			} else {
-				os.Remove(img)
+				_ = os.Remove(img)
 			}
 			if bestLuma >= 12 {
 				break
@@ -424,16 +424,16 @@ func (s *server) buildThumb(srcPath, dst string, width int) error {
 			if img := tryThumbAttempt(srcPath, tmpSS, width, ss, ""); img != "" {
 				luma, ok := frameBrightness(img)
 				if !ok {
-					os.Remove(img)
+					_ = os.Remove(img)
 					continue
 				}
 				if luma > bestLuma {
 					if best != "" {
-						os.Remove(best)
+						_ = os.Remove(best)
 					}
 					best, bestLuma = img, luma
 				} else {
-					os.Remove(img)
+					_ = os.Remove(img)
 				}
 				if bestLuma >= 12 {
 					break
@@ -467,12 +467,12 @@ func tryThumbAttempt(srcPath, tmpSS string, width int, ss, va string) string {
 			"-q:v", "4", "-f", "mjpeg", tmpSS)
 	}
 	if err := cmd.Run(); err != nil {
-		os.Remove(tmpSS)
+		_ = os.Remove(tmpSS)
 		return ""
 	}
 	fi, err := os.Stat(tmpSS)
 	if err != nil || fi.Size() == 0 {
-		os.Remove(tmpSS)
+		_ = os.Remove(tmpSS)
 		return ""
 	}
 	return tmpSS

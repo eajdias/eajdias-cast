@@ -376,9 +376,9 @@ func serveSubtitle(w http.ResponseWriter, r *http.Request, path string) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	w.Write([]byte("WEBVTT\n\n"))
+	_, _ = w.Write([]byte("WEBVTT\n\n"))
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -387,7 +387,7 @@ func serveSubtitle(w http.ResponseWriter, r *http.Request, path string) {
 		if strings.Contains(line, "-->") {
 			line = strings.ReplaceAll(line, ",", ".")
 		}
-		fmt.Fprintf(w, "%s\n", line)
+		_, _ = fmt.Fprintf(w, "%s\n", line)
 	}
 }
 
@@ -443,7 +443,7 @@ func (s *server) serveSelectedAudio(w http.ResponseWriter, r *http.Request, v Vi
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, _ := f.Stat()
 	cleanupAudioCache(s.cacheDir, audioCacheMaxBytes)
@@ -478,7 +478,7 @@ func (s *server) buildAudioRemux(v VideoMedia, audio int, dst string) error {
 		"-c:v", "copy", acodec[0], acodec[1],
 		"-movflags", "faststart", "-f", "mp4", tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("remux %s faixa %d: %v %.200s", v.Path, audio, err, out)
 	}
 	return os.Rename(tmp, dst)
@@ -502,7 +502,7 @@ func cleanupAudioCache(cacheDir string, maxBytes int64) {
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
 		if strings.HasSuffix(e.Name(), ".tmp") {
-			os.Remove(p) // resto de conversão interrompida
+			_ = os.Remove(p) // resto de conversão interrompida
 			continue
 		}
 		fi, err := e.Info()

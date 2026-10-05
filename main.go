@@ -296,7 +296,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	data = bytes.ReplaceAll(data, []byte("/static/app.js"), []byte("/static/app.js?v="+assetHash))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func mustStatic(name string) []byte { b, _ := staticFS.ReadFile(name); return b }
@@ -322,7 +322,7 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "font/woff2")
 	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -421,7 +421,7 @@ func (s *server) handleCinemaStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, _ := f.Stat()
 	w.Header().Set("Cache-Control", "private, max-age=86400")
@@ -615,7 +615,7 @@ func (s *server) handleMusicStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, _ := f.Stat()
 	w.Header().Set("Cache-Control", "private, max-age=86400")

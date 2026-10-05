@@ -128,7 +128,7 @@ func (s *dbStore) GetAllProgress() map[string]ProgressRec {
 	if err != nil {
 		return res
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var rec ProgressRec
@@ -232,7 +232,7 @@ func (s *dbStore) pruneMediaCache(keep map[string]struct{}, kind string) {
 			}
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	for _, p := range drop {
 		_, _ = s.db.Exec(`DELETE FROM media_cache WHERE path = ?`, p)
 	}

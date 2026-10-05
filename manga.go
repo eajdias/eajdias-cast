@@ -257,7 +257,7 @@ func countZipImages(path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	count := 0
 	for _, f := range r.File {
@@ -293,7 +293,7 @@ func (s *server) serveMangaPage(w http.ResponseWriter, r *http.Request, ch Manga
 			http.Error(w, "Erro ao abrir CBZ/ZIP", http.StatusInternalServerError)
 			return
 		}
-		defer zr.Close()
+		defer func() { _ = zr.Close() }()
 
 		var imgFiles []*zip.File
 		for _, f := range zr.File {
@@ -317,7 +317,7 @@ func (s *server) serveMangaPage(w http.ResponseWriter, r *http.Request, ch Manga
 			http.Error(w, "Erro ao ler página", http.StatusInternalServerError)
 			return
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 
 		ext := strings.ToLower(filepath.Ext(target.Name))
 		mime := "image/jpeg"
@@ -334,7 +334,7 @@ func (s *server) serveMangaPage(w http.ResponseWriter, r *http.Request, ch Manga
 
 		w.Header().Set("Content-Type", mime)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		io.Copy(w, rc)
+		_, _ = io.Copy(w, rc)
 		return
 	}
 

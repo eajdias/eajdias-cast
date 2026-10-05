@@ -72,7 +72,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(`<!doctype html>
+	_, _ = w.Write([]byte(`<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">

@@ -155,7 +155,7 @@ func TestFrameBrightnessBlackVsWhite(t *testing.T) {
 		if err := jpeg.Encode(f, img, nil); err != nil {
 			t.Fatal(err)
 		}
-		f.Close()
+		_ = f.Close()
 		return p
 	}
 	black, ok := frameBrightness(write(0))
@@ -277,7 +277,7 @@ func TestGenerateThumbs(t *testing.T) {
 	if err := jpeg.Encode(f, img, nil); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	cache := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cache, "thumbs"), 0755); err != nil {

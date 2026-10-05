@@ -60,7 +60,7 @@ func cachedTrackMeta(cache *dbStore, path string, mtime, size int64) (trackMeta,
 			tm.Track, _ = m.Track()
 			tm.Cover = m.Picture() != nil
 		}
-		f.Close()
+		_ = f.Close()
 		if raw, err := json.Marshal(tm); err == nil {
 			cache.setMediaCache(path, mtime, size, "track", string(raw))
 		}
@@ -162,7 +162,7 @@ func (s *server) serveAudioCover(w http.ResponseWriter, r *http.Request, t Track
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if m, err := tag.ReadFrom(f); err == nil && m.Picture() != nil {
 		pic := m.Picture()

@@ -19,7 +19,7 @@ func (s *dbStore) GetTags(mediaID string) []string {
 	if err != nil {
 		return tags
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var t string
 		if err := rows.Scan(&t); err == nil {
@@ -61,7 +61,7 @@ func (s *dbStore) AllTags(prefix string, limit int) []tagFreq {
 	if err != nil {
 		return []tagFreq{}
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	prefix = normTag(prefix)
 	if limit <= 0 || limit > 100 {
 		limit = 100
@@ -114,7 +114,7 @@ func (s *dbStore) MediaIDsWithTags(tags []string) map[string]bool {
 	if err != nil {
 		return map[string]bool{}
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var id string
