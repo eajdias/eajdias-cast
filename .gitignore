@@ -8,5 +8,7 @@ data/manga/*
 data/music/*
 !data/music/.gitkeep
 cast
+/eajdias-cast
+*.exe
 *.tmp
 .playwright-cli/*
